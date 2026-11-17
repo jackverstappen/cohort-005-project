@@ -2778,6 +2778,12 @@ This course is still in draft while the cluster examples are rewritten against t
       status: RefundStatus.Open,
       reason: "Bought the wrong one, I meant the advanced course.",
       requestedAt: daysAgo(4),
+      // Purchase 9 days ago, request 4 days ago → 5 days old at request time.
+      // Liam has no seeded video watch events; no team seats on an individual
+      // purchase.
+      watchedHoursAtRequest: 0,
+      daysSincePurchaseAtRequest: 5,
+      seatsClaimedAtRequest: 0,
     })
     .run();
 

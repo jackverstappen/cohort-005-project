@@ -148,15 +148,15 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   // A seat that came out of a team licence, and has been claimed, belongs to
   // the team — the learner cannot hand it back on their own.
-  const claimedSeat = db
-    .select({ id: coupons.id })
+  const claimedSeats = db
+    .select({ count: sql<number>`count(*)` })
     .from(coupons)
     .where(
       and(eq(coupons.purchaseId, purchase.id), isNotNull(coupons.redeemedAt))
     )
-    .get();
+    .get()?.count ?? 0;
 
-  if (claimedSeat) {
+  if (claimedSeats > 0) {
     throw data("A claimed team seat cannot be refunded.", { status: 403 });
   }
 
@@ -206,12 +206,19 @@ export async function action({ params, request }: Route.ActionArgs) {
     return data({ errors: parsed.errors }, { status: 400 });
   }
 
+  const daysSincePurchase = Math.floor(
+    (Date.now() - Date.parse(purchase.createdAt)) / 86_400_000
+  );
+
   db
     .insert(refunds)
     .values({
       purchaseId: purchase.id,
       status: RefundStatus.Open,
       reason: parsed.data.reason,
+      watchedHoursAtRequest: watchedSeconds / 3600,
+      daysSincePurchaseAtRequest: daysSincePurchase,
+      seatsClaimedAtRequest: claimedSeats,
     })
     .returning()
     .get();

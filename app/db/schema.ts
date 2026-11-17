@@ -244,6 +244,10 @@ export const refunds = sqliteTable(
     reason: text("reason").notNull(),
     // Null until someone approves — a declined request refunds nothing.
     amountRefunded: integer("amount_refunded"),
+    // Eligibility Snapshot: frozen at request time. See docs/adr/0002.
+    watchedHoursAtRequest: real("watched_hours_at_request").notNull(),
+    daysSincePurchaseAtRequest: integer("days_since_purchase_at_request").notNull(),
+    seatsClaimedAtRequest: integer("seats_claimed_at_request").notNull(),
     requestedAt: text("requested_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
