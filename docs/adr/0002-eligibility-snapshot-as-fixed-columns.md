@@ -8,5 +8,5 @@ Writing once (vs refreshing while the request is Open, or re-snapshotting at res
 
 ## Consequences
 
-- Schema change on `refunds`: three non-null integer columns.
+- Schema change on `refunds`: three non-null columns — `watched_hours_at_request` as `real`, `days_since_purchase_at_request` and `seats_claimed_at_request` as `integer`.
 - Admin UI reads these columns for the "at time of request" block; reads live tables for everything else in Learner History.
