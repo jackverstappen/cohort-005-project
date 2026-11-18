@@ -68,7 +68,7 @@ describe("default transport memoization", () => {
     process.chdir(directory);
 
     await notify({ subscriberId: "1", category: "re-engagement", payload: {} });
-    await notify({ subscriberId: "1", category: "re-engagement", payload: {} });
+    await notify({ subscriberId: "2", category: "re-engagement", payload: {} });
 
     const outbox = join(directory, ".notifications-outbox");
     const files = readdirSync(outbox);
