@@ -197,6 +197,87 @@ describe("completion nudge scheduled job", () => {
     expect(readdirSync(directory)).toHaveLength(0);
   });
 
+  it("also fires team-progress course-completed to the Team Admin when the learner holds a Team Licence Seat", async () => {
+    db.update(schema.lessons)
+      .set({ durationMinutes: 10 })
+      .where(eq(schema.lessons.id, lessonId))
+      .run();
+
+    // Make base.user a seat-holder: seed team + admin + claimed coupon.
+    const admin = db
+      .insert(schema.users)
+      .values({
+        name: "Admin Ada",
+        email: "ada@example.com",
+        role: schema.UserRole.Student,
+      })
+      .returning()
+      .get();
+    const team = db.insert(schema.teams).values({}).returning().get();
+    db.insert(schema.teamMembers)
+      .values({
+        teamId: team.id,
+        userId: admin.id,
+        role: schema.TeamMemberRole.Admin,
+      })
+      .run();
+    const purchase = db
+      .insert(schema.purchases)
+      .values({ userId: admin.id, courseId: base.course.id, amountPaid: 7900 })
+      .returning()
+      .get();
+    db.insert(schema.coupons)
+      .values({
+        teamId: team.id,
+        courseId: base.course.id,
+        code: "SEAT-X",
+        purchaseId: purchase.id,
+        redeemedByUserId: base.user.id,
+        redeemedAt: daysBefore(2),
+      })
+      .run();
+
+    db.insert(schema.videoWatchEvents)
+      .values({
+        userId: base.user.id,
+        lessonId,
+        eventType: "progress",
+        positionSeconds: 500,
+        createdAt: daysBefore(1),
+      })
+      .run();
+
+    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
+    const injected = (n: Parameters<typeof notify>[0]) =>
+      notify(n, outboxTransport(directory));
+
+    await runNotificationsJob(db, NOW, injected);
+
+    const files = readdirSync(directory);
+    const teamFiles = files.filter((f) => f.includes("team-progress"));
+    expect(teamFiles).toHaveLength(1);
+    const written = JSON.parse(readFileSync(join(directory, teamFiles[0]), "utf8"));
+    expect(written).toMatchObject({
+      subscriberId: String(admin.id),
+      category: "team-progress",
+      payload: {
+        studentName: base.user.name,
+        studentId: base.user.id,
+        courseTitle: base.course.title,
+        watermark: "course-completed",
+      },
+    });
+
+    // The student still got the completion nudge.
+    expect(files.some((f) => f.includes("completion"))).toBe(true);
+
+    // Idempotent on re-run.
+    await runNotificationsJob(db, NOW, injected);
+    expect(
+      readdirSync(directory).filter((f) => f.includes("team-progress"))
+    ).toHaveLength(1);
+  });
+
   it("re-engagement and completion scans coexist for separate enrollments", async () => {
     // The default enrollment is the re-engagement candidate: 30 days idle.
     db.insert(schema.videoWatchEvents)
