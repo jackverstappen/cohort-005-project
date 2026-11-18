@@ -245,7 +245,94 @@ async function scanCompletionCandidates(
         sentAt: now.toISOString(),
       })
       .run();
+
+    // Team-progress: if this learner holds a claimed Seat on a Team Licence
+    // for this course, also tell the Team Admin the course was completed.
+    await emitTeamProgressCourseCompleted(db, now, notify, {
+      enrollmentId: row.enrollmentId,
+      userId: row.userId,
+      courseId: row.courseId,
+      courseTitle: row.courseTitle,
+    });
   }
+}
+
+async function emitTeamProgressCourseCompleted(
+  db: DB,
+  now: Date,
+  notify: NotifyFn,
+  row: {
+    enrollmentId: number;
+    userId: number;
+    courseId: number;
+    courseTitle: string;
+  }
+): Promise<void> {
+  const seat = db
+    .select({ teamId: schema.coupons.teamId })
+    .from(schema.coupons)
+    .where(
+      and(
+        eq(schema.coupons.redeemedByUserId, row.userId),
+        eq(schema.coupons.courseId, row.courseId)
+      )
+    )
+    .get();
+  if (!seat) return;
+
+  const admin = db
+    .select({ userId: schema.teamMembers.userId })
+    .from(schema.teamMembers)
+    .where(
+      and(
+        eq(schema.teamMembers.teamId, seat.teamId),
+        eq(schema.teamMembers.role, schema.TeamMemberRole.Admin)
+      )
+    )
+    .get();
+  if (!admin || admin.userId === row.userId) return;
+
+  const subscriberId = String(admin.userId);
+  const idempotencyKey = `enrollment:${row.enrollmentId}:course-completed`;
+
+  const existing = db
+    .select({ id: schema.notificationsSent.id })
+    .from(schema.notificationsSent)
+    .where(
+      and(
+        eq(schema.notificationsSent.subscriberId, subscriberId),
+        eq(schema.notificationsSent.category, "team-progress"),
+        eq(schema.notificationsSent.idempotencyKey, idempotencyKey)
+      )
+    )
+    .get();
+  if (existing) return;
+
+  const student = db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, row.userId))
+    .get();
+
+  await notify({
+    subscriberId,
+    category: "team-progress",
+    payload: {
+      studentName: student?.name ?? "",
+      studentId: row.userId,
+      courseTitle: row.courseTitle,
+      watermark: "course-completed",
+    },
+  });
+
+  db.insert(schema.notificationsSent)
+    .values({
+      subscriberId,
+      category: "team-progress",
+      idempotencyKey,
+      sentAt: now.toISOString(),
+    })
+    .run();
 }
 
 // ─── CLI entry ───
