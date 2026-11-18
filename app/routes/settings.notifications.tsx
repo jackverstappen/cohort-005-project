@@ -21,7 +21,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const currentUserId = await getCurrentUserId(request);
 
   if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to manage preferences.", {
+    throw data("Select a user from the DevUI panel", {
       status: 401,
     });
   }
@@ -71,7 +71,7 @@ export default function NotificationsSettings({
             <Inbox
               applicationIdentifier={applicationIdentifier}
               subscriber={subscriberId}
-              subscriberHash={subscriberHash || undefined}
+              subscriberHash={subscriberHash}
             >
               <Preferences />
             </Inbox>

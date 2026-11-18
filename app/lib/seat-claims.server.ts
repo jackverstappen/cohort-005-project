@@ -6,8 +6,6 @@ import {
   courses,
   enrollments,
   purchases,
-  teamMembers,
-  TeamMemberRole,
   users,
 } from "~/db/schema";
 import { getSeatAvailability } from "~/lib/refunds.server";
@@ -15,6 +13,7 @@ import {
   notify as defaultNotify,
   type Notification,
 } from "~/lib/notifier.server";
+import { getTeamAdminId } from "~/lib/teams.server";
 
 // ─── Seat claims ───
 // A Student visits /redeem/<code> and claims the Seat granted to them. If the
@@ -33,20 +32,6 @@ export const SEAT_REFUNDED =
 export type RedeemResult =
   | { ok: true; enrollment: typeof enrollments.$inferSelect }
   | { ok: false; error: string };
-
-function getTeamAdminId(db: Db, teamId: number): number | undefined {
-  const row = db
-    .select({ userId: teamMembers.userId })
-    .from(teamMembers)
-    .where(
-      and(
-        eq(teamMembers.teamId, teamId),
-        eq(teamMembers.role, TeamMemberRole.Admin)
-      )
-    )
-    .get();
-  return row?.userId;
-}
 
 export async function redeemCoupon(
   db: Db,

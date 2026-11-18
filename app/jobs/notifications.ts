@@ -1,15 +1,18 @@
-import { and, eq, inArray, max, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, max, sql } from "drizzle-orm";
 import { db as defaultDb } from "~/db";
 import * as schema from "~/db/schema";
 import { notify as defaultNotify } from "~/lib/notifier.server";
-import type { Notification } from "~/lib/notifier.server";
+import type { Notification, NotificationCategory } from "~/lib/notifier.server";
+import { getTeamAdminId } from "~/lib/teams.server";
 
 // ─── Re-engagement nudge ───
-// Fires once per Enrollment per lapse-window crossing. A learner whose latest
-// Watched activity is older than this threshold gets one re-engagement
-// notification per ISO-week — re-running the job within the same week is a
-// no-op, and a fresh week with no activity triggers a fresh nudge.
-
+// Fires once per Enrollment per inactivity-threshold crossing. The idempotency
+// key is derived from the learner's last-activity date (the latest
+// videoWatchEvent createdAt, or enrolledAt if no events exist). A learner who
+// crosses the threshold at a given last-activity date gets exactly one nudge;
+// a second nudge only fires if they come back (new activity → new
+// lastActivityIso bucket) and lapse again. This replaces the previous
+// ISO-week scheme, which would have fired weekly on an unchanging state.
 export const INACTIVITY_THRESHOLD_DAYS = 7;
 
 // ─── Completion nudge ───
@@ -24,20 +27,38 @@ export const NEAR_COMPLETION_RATIO = 0.8;
 type DB = typeof defaultDb;
 type NotifyFn = (notification: Notification) => Promise<void>;
 
-/** ISO-week-numbering year and week — e.g. 2026-W47. */
-function isoWeekKey(date: Date): string {
-  // Copy, shift to Thursday of the current ISO week (Mon=1 … Sun=7).
-  const d = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  );
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - day);
-  const year = d.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(year, 0, 1));
-  const week = Math.ceil(
-    ((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7
-  );
-  return `${year}-W${String(week).padStart(2, "0")}`;
+interface SentKey {
+  subscriberId: string;
+  category: NotificationCategory;
+  idempotencyKey: string;
+}
+
+/** Has a notification with this (subscriberId, category, key) already been sent? */
+function hasBeenSent(db: DB, key: SentKey): boolean {
+  const existing = db
+    .select({ id: schema.notificationsSent.id })
+    .from(schema.notificationsSent)
+    .where(
+      and(
+        eq(schema.notificationsSent.subscriberId, key.subscriberId),
+        eq(schema.notificationsSent.category, key.category),
+        eq(schema.notificationsSent.idempotencyKey, key.idempotencyKey)
+      )
+    )
+    .get();
+  return !!existing;
+}
+
+/** Record that a notification was emitted for (subscriberId, category, key). */
+function recordSent(db: DB, key: SentKey, sentAt: Date): void {
+  db.insert(schema.notificationsSent)
+    .values({
+      subscriberId: key.subscriberId,
+      category: key.category,
+      idempotencyKey: key.idempotencyKey,
+      sentAt: sentAt.toISOString(),
+    })
+    .run();
 }
 
 export async function runNotificationsJob(
@@ -95,8 +116,6 @@ export async function runNotificationsJob(
     .groupBy(schema.enrollments.id)
     .all();
 
-  const idempotencyKey = isoWeekKey(now);
-
   for (const row of rows) {
     // Use last watch event if present, else fall back to enrolledAt — a
     // learner who enrolled and never watched is also a candidate.
@@ -104,20 +123,19 @@ export async function runNotificationsJob(
     if (lastActive >= cutoff) continue;
 
     const subscriberId = String(row.userId);
+    // Crossing-based idempotency: the key is the enrollment plus the
+    // learner's last-activity day. A second nudge only fires if they come
+    // back (new activity → new lastActivityIso), lapse again, and so push
+    // a fresh bucket. See spec #12: one notification per Enrollment per
+    // inactivity-threshold crossing, not per night (or per week).
+    const idempotencyKey = `crossing:${row.enrollmentId}:${lastActive.slice(0, 10)}`;
 
-    // Skip if already notified for this lapse-window crossing.
-    const existing = db
-      .select({ id: schema.notificationsSent.id })
-      .from(schema.notificationsSent)
-      .where(
-        and(
-          eq(schema.notificationsSent.subscriberId, subscriberId),
-          eq(schema.notificationsSent.category, "re-engagement"),
-          eq(schema.notificationsSent.idempotencyKey, idempotencyKey)
-        )
-      )
-      .get();
-    if (existing) continue;
+    const key: SentKey = {
+      subscriberId,
+      category: "re-engagement",
+      idempotencyKey,
+    };
+    if (hasBeenSent(db, key)) continue;
 
     await notify({
       subscriberId,
@@ -128,20 +146,14 @@ export async function runNotificationsJob(
       },
     });
 
-    db.insert(schema.notificationsSent)
-      .values({
-        subscriberId,
-        category: "re-engagement",
-        idempotencyKey,
-        sentAt: now.toISOString(),
-      })
-      .run();
+    recordSent(db, key, now);
   }
 
-  await scanCompletionCandidates(db, now, notify);
+  await emitCompletionNudges(db, now, notify);
+  await emitTeamProgressCourseCompleted(db, now, notify);
 }
 
-async function scanCompletionCandidates(
+async function emitCompletionNudges(
   db: DB,
   now: Date,
   notify: NotifyFn
@@ -211,20 +223,12 @@ async function scanCompletionCandidates(
 
     const subscriberId = String(row.userId);
     // Enrollment-scoped idempotency: one completion nudge per enrollment, ever.
-    const idempotencyKey = `enrollment:${row.enrollmentId}`;
-
-    const existing = db
-      .select({ id: schema.notificationsSent.id })
-      .from(schema.notificationsSent)
-      .where(
-        and(
-          eq(schema.notificationsSent.subscriberId, subscriberId),
-          eq(schema.notificationsSent.category, "completion"),
-          eq(schema.notificationsSent.idempotencyKey, idempotencyKey)
-        )
-      )
-      .get();
-    if (existing) continue;
+    const key: SentKey = {
+      subscriberId,
+      category: "completion",
+      idempotencyKey: `enrollment:${row.enrollmentId}`,
+    };
+    if (hasBeenSent(db, key)) continue;
 
     await notify({
       subscriberId,
@@ -237,102 +241,78 @@ async function scanCompletionCandidates(
       },
     });
 
-    db.insert(schema.notificationsSent)
-      .values({
-        subscriberId,
-        category: "completion",
-        idempotencyKey,
-        sentAt: now.toISOString(),
-      })
-      .run();
-
-    // Team-progress: if this learner holds a claimed Seat on a Team Licence
-    // for this course, also tell the Team Admin the course was completed.
-    await emitTeamProgressCourseCompleted(db, now, notify, {
-      enrollmentId: row.enrollmentId,
-      userId: row.userId,
-      courseId: row.courseId,
-      courseTitle: row.courseTitle,
-    });
+    recordSent(db, key, now);
   }
 }
 
+// Team-progress fan-out for the "course-completed" watermark. Spec #12 /
+// ticket #20: fire when a Student's Enrollment on a Team Licence transitions
+// to completed — i.e. `enrollments.completedAt` is set — independently of
+// the learner's own completion nudge (which reacts to video-seconds). We
+// scan completed enrollments and dedup per-enrollment.
 async function emitTeamProgressCourseCompleted(
   db: DB,
   now: Date,
-  notify: NotifyFn,
-  row: {
-    enrollmentId: number;
-    userId: number;
-    courseId: number;
-    courseTitle: string;
-  }
+  notify: NotifyFn
 ): Promise<void> {
-  const seat = db
-    .select({ teamId: schema.coupons.teamId })
-    .from(schema.coupons)
-    .where(
-      and(
-        eq(schema.coupons.redeemedByUserId, row.userId),
-        eq(schema.coupons.courseId, row.courseId)
-      )
+  const completed = db
+    .select({
+      enrollmentId: schema.enrollments.id,
+      userId: schema.enrollments.userId,
+      courseId: schema.enrollments.courseId,
+      courseTitle: schema.courses.title,
+    })
+    .from(schema.enrollments)
+    .innerJoin(
+      schema.courses,
+      eq(schema.courses.id, schema.enrollments.courseId)
     )
-    .get();
-  if (!seat) return;
+    .where(isNotNull(schema.enrollments.completedAt))
+    .all();
 
-  const admin = db
-    .select({ userId: schema.teamMembers.userId })
-    .from(schema.teamMembers)
-    .where(
-      and(
-        eq(schema.teamMembers.teamId, seat.teamId),
-        eq(schema.teamMembers.role, schema.TeamMemberRole.Admin)
+  for (const row of completed) {
+    const seat = db
+      .select({ teamId: schema.coupons.teamId })
+      .from(schema.coupons)
+      .where(
+        and(
+          eq(schema.coupons.redeemedByUserId, row.userId),
+          eq(schema.coupons.courseId, row.courseId)
+        )
       )
-    )
-    .get();
-  if (!admin || admin.userId === row.userId) return;
+      .get();
+    if (!seat) continue;
 
-  const subscriberId = String(admin.userId);
-  const idempotencyKey = `enrollment:${row.enrollmentId}:course-completed`;
+    const adminId = getTeamAdminId(db, seat.teamId);
+    if (adminId === null || adminId === row.userId) continue;
 
-  const existing = db
-    .select({ id: schema.notificationsSent.id })
-    .from(schema.notificationsSent)
-    .where(
-      and(
-        eq(schema.notificationsSent.subscriberId, subscriberId),
-        eq(schema.notificationsSent.category, "team-progress"),
-        eq(schema.notificationsSent.idempotencyKey, idempotencyKey)
-      )
-    )
-    .get();
-  if (existing) return;
-
-  const student = db
-    .select()
-    .from(schema.users)
-    .where(eq(schema.users.id, row.userId))
-    .get();
-
-  await notify({
-    subscriberId,
-    category: "team-progress",
-    payload: {
-      studentName: student?.name ?? "",
-      studentId: row.userId,
-      courseTitle: row.courseTitle,
-      watermark: "course-completed",
-    },
-  });
-
-  db.insert(schema.notificationsSent)
-    .values({
+    const subscriberId = String(adminId);
+    const key: SentKey = {
       subscriberId,
       category: "team-progress",
-      idempotencyKey,
-      sentAt: now.toISOString(),
-    })
-    .run();
+      idempotencyKey: `team-progress:enrollment:${row.enrollmentId}:course-completed`,
+    };
+    if (hasBeenSent(db, key)) continue;
+
+    const student = db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, row.userId))
+      .get();
+
+    await notify({
+      subscriberId,
+      category: "team-progress",
+      payload: {
+        studentName: student?.name ?? "",
+        studentId: row.userId,
+        courseTitle: row.courseTitle,
+        watermark: "course-completed",
+      },
+    });
+
+    recordSent(db, key, now);
+  }
 }
 
 // ─── CLI entry ───
