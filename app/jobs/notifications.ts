@@ -1,4 +1,4 @@
-import { and, eq, max, sql } from "drizzle-orm";
+import { and, eq, inArray, max, sql } from "drizzle-orm";
 import { db as defaultDb } from "~/db";
 import * as schema from "~/db/schema";
 import { notify as defaultNotify } from "~/lib/notifier.server";
@@ -11,6 +11,15 @@ import type { Notification } from "~/lib/notifier.server";
 // no-op, and a fresh week with no activity triggers a fresh nudge.
 
 export const INACTIVITY_THRESHOLD_DAYS = 7;
+
+// ─── Completion nudge ───
+// Fires once per Enrollment, ever: when the learner's watched seconds first
+// crosses NEAR_COMPLETION_RATIO of the course's total watchable seconds we
+// send one "you're nearly done" notification, then never again for that
+// enrollment. A single enrollment-scoped idempotency key gives the spec's
+// "once per crossing" without book-keeping buckets: once the row exists in
+// notifications_sent, further ratio climbs do nothing.
+export const NEAR_COMPLETION_RATIO = 0.8;
 
 type DB = typeof defaultDb;
 type NotifyFn = (notification: Notification) => Promise<void>;
@@ -123,6 +132,115 @@ export async function runNotificationsJob(
       .values({
         subscriberId,
         category: "re-engagement",
+        idempotencyKey,
+        sentAt: now.toISOString(),
+      })
+      .run();
+  }
+
+  await scanCompletionCandidates(db, now, notify);
+}
+
+async function scanCompletionCandidates(
+  db: DB,
+  now: Date,
+  notify: NotifyFn
+): Promise<void> {
+  const enrollments = db
+    .select({
+      enrollmentId: schema.enrollments.id,
+      userId: schema.enrollments.userId,
+      courseId: schema.courses.id,
+      courseTitle: schema.courses.title,
+      courseSlug: schema.courses.slug,
+    })
+    .from(schema.enrollments)
+    .innerJoin(
+      schema.courses,
+      eq(schema.courses.id, schema.enrollments.courseId)
+    )
+    .where(sql`${schema.enrollments.completedAt} is null`)
+    .all();
+
+  for (const row of enrollments) {
+    // Total watchable seconds for the course — sum(durationMinutes) across
+    // all lessons in all modules of the course. Treated as seconds via *60.
+    // A course with no durations defined can't be measured, so skip it.
+    const lessonIds = db
+      .select({ id: schema.lessons.id })
+      .from(schema.lessons)
+      .innerJoin(
+        schema.modules,
+        eq(schema.lessons.moduleId, schema.modules.id)
+      )
+      .where(eq(schema.modules.courseId, row.courseId))
+      .all()
+      .map((r) => r.id);
+
+    if (lessonIds.length === 0) continue;
+
+    const durationRow = db
+      .select({
+        total: sql<number>`coalesce(sum(${schema.lessons.durationMinutes}), 0)`,
+      })
+      .from(schema.lessons)
+      .where(inArray(schema.lessons.id, lessonIds))
+      .get();
+    const totalSeconds = (durationRow?.total ?? 0) * 60;
+    if (totalSeconds <= 0) continue;
+
+    const furthestPerLesson = db
+      .select({
+        furthest: sql<number>`max(${schema.videoWatchEvents.positionSeconds})`,
+      })
+      .from(schema.videoWatchEvents)
+      .where(
+        and(
+          eq(schema.videoWatchEvents.userId, row.userId),
+          inArray(schema.videoWatchEvents.lessonId, lessonIds)
+        )
+      )
+      .groupBy(schema.videoWatchEvents.lessonId)
+      .all();
+    const watchedSeconds = furthestPerLesson.reduce(
+      (total, r) => total + (r.furthest ?? 0),
+      0
+    );
+
+    if (watchedSeconds / totalSeconds < NEAR_COMPLETION_RATIO) continue;
+
+    const subscriberId = String(row.userId);
+    // Enrollment-scoped idempotency: one completion nudge per enrollment, ever.
+    const idempotencyKey = `enrollment:${row.enrollmentId}`;
+
+    const existing = db
+      .select({ id: schema.notificationsSent.id })
+      .from(schema.notificationsSent)
+      .where(
+        and(
+          eq(schema.notificationsSent.subscriberId, subscriberId),
+          eq(schema.notificationsSent.category, "completion"),
+          eq(schema.notificationsSent.idempotencyKey, idempotencyKey)
+        )
+      )
+      .get();
+    if (existing) continue;
+
+    await notify({
+      subscriberId,
+      category: "completion",
+      payload: {
+        courseTitle: row.courseTitle,
+        courseUrl: `/courses/${row.courseSlug}`,
+        watchedSeconds,
+        totalSeconds,
+      },
+    });
+
+    db.insert(schema.notificationsSent)
+      .values({
+        subscriberId,
+        category: "completion",
         idempotencyKey,
         sentAt: now.toISOString(),
       })
