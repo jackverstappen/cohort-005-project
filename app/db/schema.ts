@@ -291,6 +291,11 @@ export const coupons = sqliteTable("coupons", {
     .references(() => purchases.id),
   redeemedByUserId: integer("redeemed_by_user_id").references(() => users.id),
   redeemedAt: text("redeemed_at"),
+  // Set when a Team Admin grants this Seat to a specific Student. The student
+  // can then claim it at /redeem/<code>. Distinct from redeemedByUserId, which
+  // is only set once the student actually visits the claim link.
+  grantedToUserId: integer("granted_to_user_id").references(() => users.id),
+  grantedAt: text("granted_at"),
   // Set on every Unclaimed Seat when its Team Licence's Refund Request is
   // approved. The Seat can never be claimed after that.
   refundedAt: text("refunded_at"),
