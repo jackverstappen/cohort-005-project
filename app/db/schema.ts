@@ -360,6 +360,26 @@ export const comments = sqliteTable(
   ]
 );
 
+export const notificationsSent = sqliteTable(
+  "notifications_sent",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    subscriberId: text("subscriber_id").notNull(),
+    category: text("category").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    sentAt: text("sent_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [
+    uniqueIndex("notifications_sent_subscriber_category_key_unique").on(
+      table.subscriberId,
+      table.category,
+      table.idempotencyKey
+    ),
+  ]
+);
+
 export const videoWatchEvents = sqliteTable("video_watch_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id")
