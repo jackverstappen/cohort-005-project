@@ -1,5 +1,12 @@
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard";
+import {
+  LiveToastDemo,
+  PrototypeSwitcher,
+  VariantABell,
+  VariantBActivityRail,
+  VariantCInlineCards,
+} from "~/components/prototype-notifications";
 import { db } from "~/db";
 import {
   enrollments,
@@ -270,9 +277,22 @@ export function HydrateFallback() {
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const { inProgressCourses, completedCourses } = loaderData;
   const totalCourses = inProgressCourses.length + completedCourses.length;
+  const [params] = useSearchParams();
+  const variant = params.get("variant") ?? "A";
 
   return (
-    <div className="mx-auto max-w-7xl p-6 lg:p-8">
+    <div
+      className={
+        variant === "B"
+          ? "mr-[320px] mx-auto max-w-7xl p-6 lg:p-8"
+          : "mx-auto max-w-7xl p-6 lg:p-8"
+      }
+    >
+      {variant === "A" && <VariantABell />}
+      {variant === "B" && <VariantBActivityRail />}
+      {variant === "C" && <VariantCInlineCards />}
+      <LiveToastDemo variant={variant} />
+      <PrototypeSwitcher />
       {/* Breadcrumb */}
       <nav className="mb-6 text-sm text-muted-foreground">
         <Link to="/" className="hover:text-foreground">
