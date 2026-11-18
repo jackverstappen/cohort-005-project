@@ -92,11 +92,23 @@ export function outboxTransport(directory: string): NotificationTransport {
   };
 }
 
+// Module-level cache so the `identified` Set inside novuTransport persists
+// across notify() calls — otherwise every call rebuilt a fresh transport with
+// an empty identify cache and paid for an identify round-trip every send.
+let cachedDefaultTransport: NotificationTransport | undefined;
+
 function defaultTransport(): NotificationTransport {
+  if (cachedDefaultTransport) return cachedDefaultTransport;
   const apiKey = process.env.NOVU_API_KEY;
-  return apiKey
+  cachedDefaultTransport = apiKey
     ? novuTransport(apiKey)
     : outboxTransport(".notifications-outbox");
+  return cachedDefaultTransport;
+}
+
+/** Test hook — reset the memoized default transport. Only for unit tests. */
+export function __resetDefaultTransportForTests(): void {
+  cachedDefaultTransport = undefined;
 }
 
 export async function notify(

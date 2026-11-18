@@ -26,6 +26,14 @@ import {
 } from "~/lib/refunds.server";
 import { grantSeatToStudent } from "~/lib/seat-grants.server";
 import { formatPrice } from "~/lib/utils";
+import { z } from "zod";
+import { parseFormData } from "~/lib/validation";
+
+const grantSeatActionSchema = z.object({
+  intent: z.literal("grant-seat"),
+  teamLicenceId: z.coerce.number().int().positive(),
+  studentEmail: z.string().min(1, "Give the student's email."),
+});
 
 function getTeamForAdmin(userId: number) {
   const membership = db
@@ -172,21 +180,15 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   const form = await request.formData();
-  const intent = form.get("intent");
-  if (intent !== "grant-seat") {
-    return data({ errors: { form: "Unknown intent." } }, { status: 400 });
-  }
-
-  const teamLicenceId = Number(form.get("teamLicenceId"));
-  const studentEmail = String(form.get("studentEmail") ?? "");
-  if (!Number.isFinite(teamLicenceId)) {
-    return data({ errors: { form: "Bad team licence." } }, { status: 400 });
+  const parsed = parseFormData(form, grantSeatActionSchema);
+  if (!parsed.success) {
+    return data({ errors: parsed.errors }, { status: 400 });
   }
 
   const result = await grantSeatToStudent(
     db,
-    teamLicenceId,
-    studentEmail,
+    parsed.data.teamLicenceId,
+    parsed.data.studentEmail,
     currentUserId
   );
   if (!result.ok) {

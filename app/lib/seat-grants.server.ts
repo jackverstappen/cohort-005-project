@@ -1,8 +1,9 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
-import { coupons, courses, purchases, users, teamMembers, TeamMemberRole } from "~/db/schema";
+import { coupons, courses, purchases, users } from "~/db/schema";
 import { notify as defaultNotify, type Notification } from "~/lib/notifier.server";
+import { getTeamAdminId } from "~/lib/teams.server";
 
 // ─── Seat grants ───
 // A Team Admin grants a Seat (coupons row on a Team Licence) to a specific
@@ -15,26 +16,16 @@ import { notify as defaultNotify, type Notification } from "~/lib/notifier.serve
 // seat.
 
 export type Db = BetterSQLite3Database<typeof schema>;
-type Queryable = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Notify = (notification: Notification) => Promise<void>;
 
 export type GrantResult =
-  | { ok: true; couponCode: string; invitedUserId: number }
+  | {
+      ok: true;
+      couponCode: string;
+      invitedUserId: number;
+      courseId: number;
+    }
   | { ok: false; status: number; error: string };
-
-function isTeamAdmin(db: Queryable, userId: number, teamId: number) {
-  return !!db
-    .select()
-    .from(teamMembers)
-    .where(
-      and(
-        eq(teamMembers.userId, userId),
-        eq(teamMembers.teamId, teamId),
-        eq(teamMembers.role, TeamMemberRole.Admin)
-      )
-    )
-    .get();
-}
 
 /**
  * Grants an Unclaimed, un-granted Seat on `teamLicenceId` to the Student with
@@ -76,7 +67,7 @@ export async function grantSeatToStudent(
       };
     }
 
-    if (!isTeamAdmin(tx, teamAdminId, anySeat.teamId)) {
+    if (getTeamAdminId(tx, anySeat.teamId) !== teamAdminId) {
       return { ok: false, status: 403, error: "Only the Team Admin can grant Seats." };
     }
 
@@ -121,7 +112,12 @@ export async function grantSeatToStudent(
       .where(eq(coupons.id, available.id))
       .run();
 
-    return { ok: true, couponCode: available.code, invitedUserId: student.id };
+    return {
+      ok: true,
+      couponCode: available.code,
+      invitedUserId: student.id,
+      courseId: purchase.courseId,
+    };
   });
 
   if (!decided.ok) return decided;
@@ -129,9 +125,7 @@ export async function grantSeatToStudent(
   const course = db
     .select()
     .from(courses)
-    .where(eq(courses.id, (
-      db.select().from(purchases).where(eq(purchases.id, teamLicenceId)).get()!
-    ).courseId))
+    .where(eq(courses.id, decided.courseId))
     .get();
   const admin = db
     .select()

@@ -220,7 +220,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     isTeamAdmin: currentUserId ? isTeamAdmin(currentUserId) : false,
     novu: {
       subscriberId,
-      subscriberHash: subscriberId ? signSubscriber(subscriberId) : "",
+      subscriberHash: subscriberId ? signSubscriber(subscriberId) : undefined,
       applicationIdentifier: process.env.NOVU_APPLICATION_IDENTIFIER ?? "",
     },
   };
@@ -294,7 +294,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     <NovuProvider
       applicationIdentifier={novu.applicationIdentifier}
       subscriber={novu.subscriberId}
-      subscriberHash={novu.subscriberHash || undefined}
+      subscriberHash={novu.subscriberHash}
     >
       <NovuLiveToasts />
       {layout}

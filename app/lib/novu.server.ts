@@ -10,13 +10,22 @@
 
 import { createHmac } from "node:crypto";
 
-export function signSubscriber(userId: string | number): string {
+/**
+ * Returns the HMAC-SHA256 subscriber hash for Novu secure mode, or `undefined`
+ * when no key is configured. Callers must pass the result through to the Novu
+ * widget as-is — in dev/tests the widget renders without secure mode. In
+ * production the key is required: missing-in-prod throws so a deploy fails
+ * loudly instead of silently downgrading security.
+ */
+export function signSubscriber(userId: string | number): string | undefined {
   const apiKey = process.env.NOVU_API_KEY;
   if (!apiKey) {
-    // In dev/tests without a key, Novu's secure mode is not configured; return
-    // a deterministic placeholder so the UI can still render and tests don't
-    // trip over an environment branch.
-    return "";
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "NOVU_API_KEY is required in production to sign subscribers."
+      );
+    }
+    return undefined;
   }
   return createHmac("sha256", apiKey).update(String(userId)).digest("hex");
 }
