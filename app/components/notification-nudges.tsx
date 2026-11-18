@@ -1,10 +1,3 @@
-// STUB — notification UI shape chosen by wayfinder ticket #11 (variant C).
-// Renders inline nudge cards at the top of the Student dashboard body, plus a
-// minimal bell (top-right) for transactional + informational notifications.
-// Data is hard-coded placeholder until the follow-on build effort wires Novu
-// per ADR 0006. Preference centre lives at /settings/notifications.
-// Full prototype (variants A/B/C + switcher) on branch prototype/notification-placement.
-
 import { useState } from "react";
 import {
   Bell,
@@ -15,16 +8,19 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useNotifications } from "@novu/react/hooks";
 import { Button } from "~/components/ui/button";
 
-type Category =
+export type Category =
   | "re-engagement"
   | "completion"
   | "seat-invite"
   | "refund-status"
   | "team-progress";
 
-type Notification = {
+const NUDGE_CATEGORIES = new Set<Category>(["re-engagement", "completion"]);
+
+export type UINotification = {
   id: string;
   category: Category;
   title: string;
@@ -41,43 +37,61 @@ const CATEGORY_ICON: Record<Category, typeof Bell> = {
   "team-progress": Users,
 };
 
-// PLACEHOLDER. Replaced by Novu subscriber feed in the build effort.
-const PLACEHOLDER_NOTIFICATIONS: Notification[] = [
-  {
-    id: "n1",
-    category: "re-engagement",
-    title: "React Patterns — 5 days since your last lesson",
-    body: "You left off in Lesson 3. Resume to keep your streak going.",
-    ts: "2h ago",
-    read: false,
-  },
-  {
-    id: "n2",
-    category: "completion",
-    title: "You're 12 minutes from completing TypeScript Deep Dive",
-    body: "One lesson left in Module 4.",
-    ts: "Yesterday",
-    read: false,
-  },
-  {
-    id: "n3",
-    category: "seat-invite",
-    title: "Acme Corp invited you to Advanced Testing",
-    body: "Claim your seat before the invite expires.",
-    ts: "3 days ago",
-    read: true,
-  },
-  {
-    id: "n4",
-    category: "refund-status",
-    title: "Refund approved: Vue Fundamentals ($49)",
-    body: "The funds will appear in your account within 5 business days.",
-    ts: "Last week",
-    read: true,
-  },
-];
+function isCategory(identifier: string | undefined): identifier is Category {
+  return (
+    identifier === "re-engagement" ||
+    identifier === "completion" ||
+    identifier === "seat-invite" ||
+    identifier === "refund-status" ||
+    identifier === "team-progress"
+  );
+}
 
-function TrayRow({ n }: { n: Notification }) {
+function formatRelative(createdAt: string): string {
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  if (Number.isNaN(diffMs)) return "";
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs < hour) return `${Math.max(1, Math.round(diffMs / minute))}m ago`;
+  if (diffMs < day) return `${Math.round(diffMs / hour)}h ago`;
+  if (diffMs < 7 * day) return `${Math.round(diffMs / day)}d ago`;
+  return new Date(createdAt).toLocaleDateString();
+}
+
+type NovuLikeNotification = {
+  id: string;
+  subject?: string;
+  body: string;
+  isRead: boolean;
+  createdAt: string;
+  workflow?: { identifier: string };
+};
+
+export function adaptNotification(
+  n: NovuLikeNotification
+): UINotification | null {
+  const identifier = n.workflow?.identifier;
+  if (!isCategory(identifier)) return null;
+  return {
+    id: n.id,
+    category: identifier,
+    title: n.subject ?? "",
+    body: n.body,
+    ts: formatRelative(n.createdAt),
+    read: n.isRead,
+  };
+}
+
+export function partitionForNudges(items: UINotification[]): UINotification[] {
+  return items.filter((n) => NUDGE_CATEGORIES.has(n.category));
+}
+
+export function partitionForTray(items: UINotification[]): UINotification[] {
+  return items.filter((n) => !NUDGE_CATEGORIES.has(n.category));
+}
+
+function TrayRow({ n }: { n: UINotification }) {
   const Icon = CATEGORY_ICON[n.category];
   return (
     <div
@@ -99,12 +113,20 @@ function TrayRow({ n }: { n: Notification }) {
   );
 }
 
-export function NudgeCards() {
+/**
+ * Pure render: nudge cards for re-engagement + completion. Filters defensively
+ * so callers can pass the entire feed. Dismissal fires `onDismiss(id)`.
+ */
+export function NudgeCardsView({
+  notifications,
+  onDismiss,
+}: {
+  notifications: UINotification[];
+  onDismiss: (id: string) => void;
+}) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const actionable = PLACEHOLDER_NOTIFICATIONS.filter(
-    (n) =>
-      (n.category === "re-engagement" || n.category === "completion") &&
-      !dismissed.has(n.id)
+  const actionable = partitionForNudges(notifications).filter(
+    (n) => !dismissed.has(n.id)
   );
   if (actionable.length === 0) return null;
   return (
@@ -128,7 +150,10 @@ export function NudgeCards() {
               Continue
             </Button>
             <button
-              onClick={() => setDismissed((d) => new Set(d).add(n.id))}
+              onClick={() => {
+                setDismissed((d) => new Set(d).add(n.id));
+                onDismiss(n.id);
+              }}
               className="flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="Dismiss"
             >
@@ -141,11 +166,16 @@ export function NudgeCards() {
   );
 }
 
-export function NotificationBell() {
+/**
+ * Pure render: bell + tray for the three non-nudge categories.
+ */
+export function NotificationBellView({
+  notifications,
+}: {
+  notifications: UINotification[];
+}) {
   const [open, setOpen] = useState(false);
-  const tray = PLACEHOLDER_NOTIFICATIONS.filter(
-    (n) => n.category !== "re-engagement" && n.category !== "completion"
-  );
+  const tray = partitionForTray(notifications);
   const unread = tray.filter((n) => !n.read).length;
   return (
     <div className="fixed right-6 top-6 z-30">
@@ -170,9 +200,13 @@ export function NotificationBell() {
             </span>
           </div>
           <div className="max-h-[480px] overflow-y-auto">
-            {tray.map((n) => (
-              <TrayRow key={n.id} n={n} />
-            ))}
+            {tray.length === 0 ? (
+              <p className="p-6 text-center text-sm text-muted-foreground">
+                You&apos;re all caught up.
+              </p>
+            ) : (
+              tray.map((n) => <TrayRow key={n.id} n={n} />)
+            )}
           </div>
           <div className="border-t p-2 text-center">
             <a
@@ -186,4 +220,57 @@ export function NotificationBell() {
       )}
     </div>
   );
+}
+
+function adaptAll(
+  notifications: ReadonlyArray<{
+    id: string;
+    subject?: string;
+    body: string;
+    isRead: boolean;
+    createdAt: string;
+    workflow?: { identifier: string };
+  }>
+): UINotification[] {
+  return notifications
+    .map((n) =>
+      adaptNotification({
+        id: n.id,
+        subject: n.subject,
+        body: n.body,
+        isRead: n.isRead,
+        createdAt: n.createdAt,
+        workflow: n.workflow
+          ? { identifier: n.workflow.identifier }
+          : undefined,
+      })
+    )
+    .filter((n): n is UINotification => n !== null);
+}
+
+/**
+ * Thin wrapper: subscribes via `@novu/react`'s `useNotifications` hook and
+ * forwards the feed (adapted to `UINotification`) to the pure `NudgeCardsView`.
+ * Dismissal marks the Novu feed item as read.
+ */
+export function NudgeCards() {
+  const { notifications } = useNotifications();
+  const items = adaptAll(notifications ?? []);
+
+  const handleDismiss = (id: string) => {
+    const match = notifications?.find((n) => n.id === id);
+    if (match) void match.read();
+  };
+
+  return <NudgeCardsView notifications={items} onDismiss={handleDismiss} />;
+}
+
+/**
+ * Thin wrapper: subscribes via `@novu/react`'s `useNotifications` hook and
+ * forwards the feed to the pure `NotificationBellView`.
+ */
+export function NotificationBell() {
+  const { notifications } = useNotifications();
+  const items = adaptAll(notifications ?? []);
+  return <NotificationBellView notifications={items} />;
 }

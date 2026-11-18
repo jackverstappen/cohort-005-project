@@ -24,7 +24,16 @@ import {
   listTeamLicences,
   type SeatAvailability,
 } from "~/lib/refunds.server";
+import { grantSeatToStudent } from "~/lib/seat-grants.server";
 import { formatPrice } from "~/lib/utils";
+import { z } from "zod";
+import { parseFormData } from "~/lib/validation";
+
+const grantSeatActionSchema = z.object({
+  intent: z.literal("grant-seat"),
+  teamLicenceId: z.coerce.number().int().positive(),
+  studentEmail: z.string().min(1, "Give the student's email."),
+});
 
 function getTeamForAdmin(userId: number) {
   const membership = db
@@ -162,6 +171,30 @@ export async function loader({ request }: Route.LoaderArgs) {
   const teamLicences = listTeamLicences(db, currentUserId, new Date());
 
   return { courseStats, couponRows, teamLicences };
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  const currentUserId = await getCurrentUserId(request);
+  if (!currentUserId) {
+    throw data("Select a user from the DevUI panel.", { status: 401 });
+  }
+
+  const form = await request.formData();
+  const parsed = parseFormData(form, grantSeatActionSchema);
+  if (!parsed.success) {
+    return data({ errors: parsed.errors }, { status: 400 });
+  }
+
+  const result = await grantSeatToStudent(
+    db,
+    parsed.data.teamLicenceId,
+    parsed.data.studentEmail,
+    currentUserId
+  );
+  if (!result.ok) {
+    return data({ errors: { form: result.error } }, { status: result.status });
+  }
+  return { ok: true };
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -355,9 +388,22 @@ type TeamLicence = Route.ComponentProps["loaderData"]["teamLicences"][number];
 
 function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
   const fetcher = useFetcher<{ errors?: Record<string, string> }>();
+  const grantFetcher = useFetcher<{ errors?: Record<string, string>; ok?: boolean }>();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [grantEmail, setGrantEmail] = useState("");
   const isSubmitting = fetcher.state !== "idle";
+  const isGranting = grantFetcher.state !== "idle";
   const refundRequest = licence.latestRefundRequest;
+
+  useEffect(() => {
+    const firstError = Object.values(grantFetcher.data?.errors ?? {})[0];
+    if (grantFetcher.state === "idle" && firstError) {
+      toast.error(firstError);
+    } else if (grantFetcher.state === "idle" && grantFetcher.data?.ok) {
+      toast.success("Seat granted — the student has been invited.");
+      setGrantEmail("");
+    }
+  }, [grantFetcher.state, grantFetcher.data]);
 
   useEffect(() => {
     const firstError = Object.values(fetcher.data?.errors ?? {})[0];
@@ -399,6 +445,26 @@ function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
             </Button>
           )}
         </div>
+
+        {refundRequest?.status !== RefundStatus.Open &&
+          refundRequest?.status !== RefundStatus.Approved && (
+            <grantFetcher.Form method="post" action="/team" className="mt-3 flex gap-2">
+              <input type="hidden" name="intent" value="grant-seat" />
+              <input type="hidden" name="teamLicenceId" value={licence.purchaseId} />
+              <input
+                type="email"
+                name="studentEmail"
+                required
+                placeholder="student@example.com"
+                value={grantEmail}
+                onChange={(e) => setGrantEmail(e.target.value)}
+                className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+              />
+              <Button type="submit" size="sm" disabled={isGranting}>
+                {isGranting ? "Granting..." : "Grant seat"}
+              </Button>
+            </grantFetcher.Form>
+          )}
 
         {refundRequest?.status === RefundStatus.Declined && refundRequest.decisionNote && (
           <p className="mt-3 rounded-md bg-muted p-2 text-sm">

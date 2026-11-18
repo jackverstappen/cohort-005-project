@@ -23,6 +23,9 @@ import {
   REFUND_WINDOW_DAYS,
   type RuleBreak,
 } from "~/lib/refund-rules";
+import { notify as defaultNotify, type Notification } from "~/lib/notifier.server";
+
+type Notify = (notification: Notification) => Promise<void>;
 
 // ─── Refunds ───
 // Everything about Refund Requests: whether a Purchase may be refunded, raising
@@ -611,16 +614,19 @@ function findOpenRefundRequest(
  * - A Team Licence: its Unclaimed Seats can never be claimed. Refused if any
  *   Seat has been claimed (docs/adr/0003).
  */
-export function approveRefundRequest(
+export async function approveRefundRequest(
   db: Db,
   refundRequestId: number,
   platformAdminId: number,
   note: string | null,
-  now: Date
-): DecisionResult {
-  return db.transaction((tx): DecisionResult => {
+  now: Date,
+  notify: Notify = defaultNotify
+): Promise<DecisionResult> {
+  type Decided = { result: DecisionResult; purchase?: Purchase };
+
+  const decided = db.transaction((tx): Decided => {
     const found = findOpenRefundRequest(tx, refundRequestId);
-    if (!found.ok) return found;
+    if (!found.ok) return { result: found };
 
     const { purchase } = found;
     const seats = getSeats(tx, purchase.id);
@@ -628,10 +634,12 @@ export function approveRefundRequest(
     if (kindOf(seats) === "team_licence") {
       if (seats.some(isClaimed)) {
         return {
-          ok: false,
-          status: 409,
-          error:
-            "A Seat on this Team Licence has been claimed, so this refund request can only be declined.",
+          result: {
+            ok: false,
+            status: 409,
+            error:
+              "A Seat on this Team Licence has been claimed, so this refund request can only be declined.",
+          },
         };
       }
 
@@ -678,10 +686,19 @@ export function approveRefundRequest(
       .run();
 
     return {
-      ok: true,
-      email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      result: {
+        ok: true,
+        email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      },
+      purchase,
     };
   });
+
+  if (decided.result.ok && decided.purchase) {
+    await notifyDecision(db, decided.purchase, "approved", notify);
+  }
+
+  return decided.result;
 }
 
 /**
@@ -689,13 +706,14 @@ export function approveRefundRequest(
  * the buyer may raise a new Refund Request. The note is required: it is how
  * the buyer learns whether another request is worth raising.
  */
-export function declineRefundRequest(
+export async function declineRefundRequest(
   db: Db,
   refundRequestId: number,
   platformAdminId: number,
   note: string,
-  now: Date
-): DecisionResult {
+  now: Date,
+  notify: Notify = defaultNotify
+): Promise<DecisionResult> {
   const trimmedNote = note.trim();
 
   if (trimmedNote.length === 0) {
@@ -706,9 +724,11 @@ export function declineRefundRequest(
     };
   }
 
-  return db.transaction((tx): DecisionResult => {
+  type Decided = { result: DecisionResult; purchase?: Purchase };
+
+  const decided = db.transaction((tx): Decided => {
     const found = findOpenRefundRequest(tx, refundRequestId);
-    if (!found.ok) return found;
+    if (!found.ok) return { result: found };
 
     tx.update(refunds)
       .set({
@@ -721,14 +741,52 @@ export function declineRefundRequest(
       .run();
 
     return {
-      ok: true,
-      email: buildDecisionEmail(
-        tx,
-        found.purchase,
-        RefundStatus.Declined,
-        trimmedNote
-      ),
+      result: {
+        ok: true,
+        email: buildDecisionEmail(
+          tx,
+          found.purchase,
+          RefundStatus.Declined,
+          trimmedNote
+        ),
+      },
+      purchase: found.purchase,
     };
+  });
+
+  if (decided.result.ok && decided.purchase) {
+    await notifyDecision(db, decided.purchase, "declined", notify);
+  }
+
+  return decided.result;
+}
+
+async function notifyDecision(
+  db: Queryable,
+  purchase: Purchase,
+  decision: "approved" | "declined",
+  notify: Notify
+): Promise<void> {
+  const buyer = db
+    .select()
+    .from(users)
+    .where(eq(users.id, purchase.userId))
+    .get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+
+  await notify({
+    subscriberId: String(purchase.userId),
+    category: "refund-status",
+    payload: {
+      courseTitle: course?.title ?? "your course",
+      buyerName: buyer?.name ?? "",
+      amount: purchase.amountPaid,
+      decision,
+    },
   });
 }
 
