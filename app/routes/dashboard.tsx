@@ -16,6 +16,7 @@ import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import { AlertTriangle, BookOpen, CheckCircle2, GraduationCap, PlayCircle } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
+import { NotificationBell, NudgeCards } from "~/components/notification-nudges";
 import { data, isRouteErrorResponse } from "react-router";
 
 function getUserEnrolledCourses(userId: number) {
@@ -273,6 +274,8 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
+      <NotificationBell />
+      <NudgeCards />
       {/* Breadcrumb */}
       <nav className="mb-6 text-sm text-muted-foreground">
         <Link to="/" className="hover:text-foreground">
