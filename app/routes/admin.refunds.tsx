@@ -108,14 +108,14 @@ export async function action({ request }: Route.ActionArgs) {
 
   const result =
     intent === "approve"
-      ? approveRefundRequest(
+      ? await approveRefundRequest(
           db,
           refundRequestId,
           platformAdmin.id,
           note || null,
           new Date()
         )
-      : declineRefundRequest(
+      : await declineRefundRequest(
           db,
           refundRequestId,
           platformAdmin.id,
