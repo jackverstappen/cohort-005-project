@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
@@ -103,5 +104,171 @@ describe("re-engagement scheduled job", () => {
 
     expect(readdirSync(directory)).toHaveLength(0);
     expect(db.select().from(schema.notificationsSent).all()).toHaveLength(0);
+  });
+});
+
+describe("completion nudge scheduled job", () => {
+  it("fires once for an enrollment past the near-completion threshold, and is idempotent on re-run", async () => {
+    // Give the lesson a duration so totalSeconds is defined. 10 minutes = 600s.
+    db.update(schema.lessons)
+      .set({ durationMinutes: 10 })
+      .where(eq(schema.lessons.id, lessonId))
+      .run();
+
+    // Watched 500s / 600s = 0.833… — past 0.8 threshold.
+    db.insert(schema.videoWatchEvents)
+      .values({
+        userId: base.user.id,
+        lessonId,
+        eventType: "progress",
+        positionSeconds: 500,
+        createdAt: daysBefore(1),
+      })
+      .run();
+
+    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
+    const transport = outboxTransport(directory);
+    const injected = (n: Parameters<typeof notify>[0]) =>
+      notify(n, transport);
+
+    await runNotificationsJob(db, NOW, injected);
+
+    const files = readdirSync(directory);
+    const completionFiles = files.filter((f) => f.includes("completion"));
+    expect(completionFiles).toHaveLength(1);
+    const written = JSON.parse(
+      readFileSync(join(directory, completionFiles[0]), "utf8")
+    );
+    expect(written).toMatchObject({
+      subscriberId: String(base.user.id),
+      category: "completion",
+      payload: {
+        courseTitle: "Test Course",
+        watchedSeconds: 500,
+        totalSeconds: 600,
+      },
+    });
+
+    const sent = db
+      .select()
+      .from(schema.notificationsSent)
+      .where(eq(schema.notificationsSent.category, "completion"))
+      .all();
+    expect(sent).toHaveLength(1);
+
+    // Re-run — no new completion entries.
+    await runNotificationsJob(db, NOW, injected);
+    expect(
+      readdirSync(directory).filter((f) => f.includes("completion"))
+    ).toHaveLength(1);
+    expect(
+      db
+        .select()
+        .from(schema.notificationsSent)
+        .where(eq(schema.notificationsSent.category, "completion"))
+        .all()
+    ).toHaveLength(1);
+  });
+
+  it("does not fire if the enrollment is already marked completed", async () => {
+    db.update(schema.lessons)
+      .set({ durationMinutes: 10 })
+      .where(eq(schema.lessons.id, lessonId))
+      .run();
+    db.update(schema.enrollments)
+      .set({ completedAt: daysBefore(1) })
+      .where(eq(schema.enrollments.userId, base.user.id))
+      .run();
+    db.insert(schema.videoWatchEvents)
+      .values({
+        userId: base.user.id,
+        lessonId,
+        eventType: "progress",
+        positionSeconds: 590,
+        createdAt: daysBefore(1),
+      })
+      .run();
+
+    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
+    const injected = (n: Parameters<typeof notify>[0]) =>
+      notify(n, outboxTransport(directory));
+
+    await runNotificationsJob(db, NOW, injected);
+    expect(readdirSync(directory)).toHaveLength(0);
+  });
+
+  it("re-engagement and completion scans coexist for separate enrollments", async () => {
+    // The default enrollment is the re-engagement candidate: 30 days idle.
+    db.insert(schema.videoWatchEvents)
+      .values({
+        userId: base.user.id,
+        lessonId,
+        eventType: "progress",
+        positionSeconds: 10,
+        createdAt: daysBefore(30),
+      })
+      .run();
+
+    // A second user + course for the completion candidate.
+    const user2 = db
+      .insert(schema.users)
+      .values({
+        name: "Other",
+        email: "other@example.com",
+        role: schema.UserRole.Student,
+      })
+      .returning()
+      .get();
+    const course2 = db
+      .insert(schema.courses)
+      .values({
+        title: "Course Two",
+        slug: "course-two",
+        description: "x",
+        salesCopy: "x",
+        instructorId: base.instructor.id,
+        categoryId: base.category.id,
+        status: schema.CourseStatus.Published,
+      })
+      .returning()
+      .get();
+    const mod2 = db
+      .insert(schema.modules)
+      .values({ courseId: course2.id, title: "M", position: 1 })
+      .returning()
+      .get();
+    const lesson2 = db
+      .insert(schema.lessons)
+      .values({
+        moduleId: mod2.id,
+        title: "L",
+        position: 1,
+        durationMinutes: 10,
+      })
+      .returning()
+      .get();
+    db.insert(schema.enrollments)
+      .values({ userId: user2.id, courseId: course2.id })
+      .run();
+    db.insert(schema.videoWatchEvents)
+      .values({
+        userId: user2.id,
+        lessonId: lesson2.id,
+        eventType: "progress",
+        positionSeconds: 550,
+        createdAt: daysBefore(1),
+      })
+      .run();
+
+    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
+    const injected = (n: Parameters<typeof notify>[0]) =>
+      notify(n, outboxTransport(directory));
+
+    await runNotificationsJob(db, NOW, injected);
+
+    const files = readdirSync(directory);
+    expect(files.some((f) => f.includes("re-engagement"))).toBe(true);
+    expect(files.some((f) => f.includes("completion"))).toBe(true);
+    expect(files).toHaveLength(2);
   });
 });
