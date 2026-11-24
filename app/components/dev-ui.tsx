@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Form, useLocation } from "react-router";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
@@ -44,6 +44,18 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
   const [minimized, setMinimized] = useState(false);
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  const switcherRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!switcherRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
   if (minimized) {
     return (
       <div className="fixed bottom-4 right-4 z-50">
@@ -90,7 +102,7 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
           </div>
         )}
 
-        <div className="relative">
+        <div className="relative" ref={switcherRef}>
           <Button
             size="sm"
             variant="outline"
@@ -117,6 +129,7 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
                   <input type="hidden" name="userId" value={user.id} />
                   <button
                     type="submit"
+                    onClick={() => setOpen(false)}
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
                       currentUser?.id === user.id && "bg-accent"
