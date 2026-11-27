@@ -16,26 +16,32 @@ import { isBookmarked, toggleBookmark } from "~/lib/bookmarks.server";
 import { getNote, saveNote } from "~/lib/notes.server";
 import { MAX_NOTE_LENGTH } from "~/lib/notes";
 import {
-  calculateWatchProgress,
-  computeResult,
   flattenCourseLessons,
-  getBestAttempt,
-  getCommentById,
   getCourseWithDetails,
-  getLastWatchPosition,
   getLessonById,
+  getModuleById,
+  getUserById,
+} from "~/modules/lesson-page/course.server";
+import {
+  calculateWatchProgress,
+  getLastWatchPosition,
   getLessonProgress,
   getLessonProgressForCourse,
-  getLessonThread,
-  getModuleById,
-  getQuizByLessonId,
-  getQuizWithQuestions,
-  getUserById,
-  isQuizOnLesson,
   markLessonComplete,
   markLessonInProgress,
+} from "~/modules/lesson-page/progress.server";
+import {
+  getCommentById,
+  getLessonThread,
   renderThread,
-} from "~/modules/lesson-page/index.server";
+} from "~/modules/lesson-page/thread.server";
+import {
+  computeResult,
+  getBestAttempt,
+  getQuizByLessonId,
+  getQuizWithQuestions,
+  isQuizOnLesson,
+} from "~/modules/lesson-page/quiz.server";
 import { db } from "~/db";
 import { Button } from "~/components/ui/button";
 import { AlertTriangle } from "lucide-react";
