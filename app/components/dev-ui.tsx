@@ -1,23 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, useLocation } from "react-router";
 import { Button } from "~/components/ui/button";
+import { FeedbackButton } from "~/components/feedback-button";
 import { cn } from "~/lib/utils";
 import type { UserRole } from "~/db/schema";
 import { ChevronDown, ChevronUp, Globe } from "lucide-react";
 
-interface DevUser {
+type DevUser = {
   id: number;
   name: string;
   role: UserRole;
-}
+};
 
-interface DevUIProps {
+type DevUIProps = {
   users: DevUser[];
   currentUser: DevUser | null;
   devCountry: string | null;
   countryTierInfo: { tier: number; discount: number; label: string };
   countries: { code: string; name: string }[];
-}
+};
 
 const roleBadgeColors: Record<string, string> = {
   admin: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
@@ -40,9 +41,16 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-export function DevUI({ users, currentUser, devCountry, countryTierInfo, countries }: DevUIProps) {
+export function DevUI({
+  users,
+  currentUser,
+  devCountry,
+  countryTierInfo,
+  countries,
+}: DevUIProps) {
   const [minimized, setMinimized] = useState(false);
   const [open, setOpen] = useState(false);
+  const switcherRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const switcherRef = useRef<HTMLDivElement>(null);
 
@@ -76,7 +84,7 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
     <div className="fixed bottom-4 right-4 z-50 w-72 rounded-lg border border-dashed bg-background/90 shadow-lg backdrop-blur-sm">
       <div className="flex items-center justify-between border-b border-dashed px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          DevUI
+          DevUI · {users.length} users
         </span>
         <div className="flex gap-1">
           <Button
@@ -124,6 +132,7 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
                 <Form
                   key={user.id}
                   method="post"
+                  onSubmit={() => setOpen(false)}
                   action={`/api/switch-user?redirectTo=${encodeURIComponent(location.pathname + location.search)}`}
                 >
                   <input type="hidden" name="userId" value={user.id} />
@@ -157,7 +166,7 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
             <select
               name="country"
               defaultValue={devCountry ?? ""}
-              onChange={(e) => e.target.form?.requestSubmit()}
+              onChange={(event) => event.target.form?.requestSubmit()}
               className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
             >
               <option value="">Auto-detect</option>
@@ -179,6 +188,9 @@ export function DevUI({ users, currentUser, devCountry, countryTierInfo, countri
             </div>
           )}
         </div>
+
+        {/* Files issues with your own gh login, so it never ships. */}
+        {import.meta.env.DEV && <FeedbackButton />}
       </div>
     </div>
   );

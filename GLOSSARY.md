@@ -1,10 +1,14 @@
 # Cadence
 
-Cadence sells video courses to students. This glossary covers the language around buying, taking and refunding courses.
+Cadence sells video courses to students. This glossary covers the language around buying, taking and refunding courses, and telling people about it.
 
 ## Language
 
 ### People
+
+**Person**:
+Anyone signed in to Cadence, whatever their role. Someone who isn't signed in is not a Person.
+_Avoid_: Viewer, User, Visitor, Member
 
 **Student**:
 Someone who takes courses on Cadence.
@@ -35,6 +39,16 @@ A Student who has lost their Enrollment on a course but still has progress on it
 Seconds of video a Student has actually played in a course: the furthest point reached in each lesson, added up. Not lessons opened.
 _Avoid_: Viewed, Progress
 
+### Discussions
+
+**Discussion Question**:
+A top-level comment on a lesson by anyone other than the course's Instructor.
+_Avoid_: Question (on its own, which clashes with quiz questions), Thread
+
+**Discussion Reply**:
+A comment that answers a Discussion Question. Replies are one level deep.
+_Avoid_: Reply (on its own), Answer
+
 ### Purchases
 
 **Purchase**:
@@ -57,6 +71,14 @@ A Seat no Student has claimed yet.
 
 **Claimed Seat**:
 A Seat a Student has claimed. It belongs to that Student, so a Team Licence with any Claimed Seat can't be refunded.
+
+**Purchasing-Power Price**:
+A price discounted for the country the buyer is in.
+_Avoid_: PPP price, regional price
+
+**Country Lock**:
+The rule that a Purchase made at a Purchasing-Power Price only works from the country it was bought in.
+_Avoid_: PPP block, geo-block, region lock
 
 ### Refunds
 
@@ -92,3 +114,26 @@ A Refund where the money couldn't be sent. The Refund Request stays approved, be
 **Watch Limit**:
 The amount of Watched time on a course past which a Student can no longer get a Refund, because they've had the course.
 _Avoid_: Watch cap, Viewing threshold
+
+### Notifications
+
+**Notification**:
+A message Cadence sends a person to tell them something that concerns them has happened.
+_Avoid_: Alert, Message, Activity
+
+**Notification Feed**:
+The place inside Cadence where a person sees their Notifications.
+_Avoid_: Inbox, Activity feed
+
+### Bookmarks and Notes
+
+**Bookmark**:
+A Student's flag on a Lesson, so they can find it again. One per Student per
+Lesson, and the Student is the only one who sees it.
+_Avoid_: Favourite, star, saved item
+
+**Note**:
+A Student's own writing about a Lesson, private to the Student who wrote it.
+One per Student per Lesson. A Note is not a Comment — a Comment is addressed
+to other people, a Note is addressed to nobody.
+_Avoid_: Annotation, scratchpad, memo
