@@ -49,29 +49,29 @@ describe("notify", () => {
 
 describe("default transport memoization", () => {
   const originalKey = process.env.NOVU_API_KEY;
-  const originalCwd = process.cwd();
+  const originalOutbox = process.env.NOTIFICATIONS_OUTBOX_DIR;
 
   afterEach(() => {
     if (originalKey === undefined) delete process.env.NOVU_API_KEY;
     else process.env.NOVU_API_KEY = originalKey;
-    process.chdir(originalCwd);
+    if (originalOutbox === undefined)
+      delete process.env.NOTIFICATIONS_OUTBOX_DIR;
+    else process.env.NOTIFICATIONS_OUTBOX_DIR = originalOutbox;
     __resetDefaultTransportForTests();
   });
 
   it("reuses one transport instance across notify() calls", async () => {
-    // No NOVU_API_KEY → default resolves to outboxTransport. We pin cwd to a
-    // tmp dir so the outbox writes somewhere disposable. Two notify() calls
-    // without an explicit transport must produce two files in the same dir,
-    // proving the transport (and its identify cache) persists.
+    // No NOVU_API_KEY → default resolves to outboxTransport. We point its
+    // outbox at a tmp dir through NOTIFICATIONS_OUTBOX_DIR; `process.chdir`
+    // would also work locally but Stryker's worker-thread runner rejects it.
     delete process.env.NOVU_API_KEY;
     const directory = mkdtempSync(join(tmpdir(), "notifier-memo-"));
-    process.chdir(directory);
+    process.env.NOTIFICATIONS_OUTBOX_DIR = directory;
 
     await notify({ subscriberId: "1", category: "re-engagement", payload: {} });
     await notify({ subscriberId: "2", category: "re-engagement", payload: {} });
 
-    const outbox = join(directory, ".notifications-outbox");
-    const files = readdirSync(outbox);
+    const files = readdirSync(directory);
     expect(files).toHaveLength(2);
   });
 });

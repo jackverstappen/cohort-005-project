@@ -1,11 +1,21 @@
 // Fails when a file is too big for an agent to read and edit in one go.
 // Tokens are estimated as bytes / 4, which is close enough for code.
-// Usage: node scripts/check-file-tokens.js <file>...
+// Usage:
+//   node scripts/check-file-tokens.js <file>...   — explicit paths (pre-commit)
+//   node scripts/check-file-tokens.js --all       — every tracked file (CI),
+//     using scripts/oversize-baseline.json to tolerate pre-existing offenders.
 
-import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MAX_TOKENS = 5000;
 const BYTES_PER_TOKEN = 4;
+const BASELINE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "oversize-baseline.json"
+);
 
 // Generated files that nobody edits by hand, and workflow files, which
 // GitHub reads as one file each and which cannot be split.
@@ -17,22 +27,76 @@ const IGNORED = [
 
 const isBinary = (contents) => contents.subarray(0, 8000).includes(0);
 
-const oversized = process.argv
-  .slice(2)
+const args = process.argv.slice(2);
+const useAll = args[0] === "--all";
+const files = useAll
+  ? execSync("git ls-files", { encoding: "utf8" }).split("\n").filter(Boolean)
+  : args;
+
+const baseline = useAll
+  ? Object.fromEntries(
+      Object.entries(JSON.parse(readFileSync(BASELINE_PATH, "utf8"))).filter(
+        ([key]) => !key.startsWith("_")
+      )
+    )
+  : {};
+
+const measured = files
   .map((file) => file.replaceAll("\\", "/").replace(`${process.cwd()}/`, ""))
   .filter((file) => !IGNORED.some((pattern) => pattern.test(file)))
+  // `git ls-files` lists submodule paths as directories; skip them.
+  .filter((file) => {
+    try {
+      return statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  })
   .map((file) => ({ file, contents: readFileSync(file) }))
   .filter(({ contents }) => !isBinary(contents))
   .map(({ file, contents }) => ({
     file,
     tokens: Math.ceil(contents.length / BYTES_PER_TOKEN),
-  }))
-  .filter(({ tokens }) => tokens > MAX_TOKENS);
+  }));
+
+const oversized = measured.filter(({ file, tokens }) => {
+  if (tokens <= MAX_TOKENS) return false;
+  if (!useAll) return true;
+  const baselined = baseline[file];
+  return baselined === undefined || tokens > baselined;
+});
+
+const stale = useAll
+  ? Object.keys(baseline).filter((file) => {
+      const current = measured.find((entry) => entry.file === file);
+      return !current || current.tokens <= MAX_TOKENS;
+    })
+  : [];
+
+if (useAll && Object.keys(baseline).length > 0 && oversized.length === 0) {
+  console.log(
+    `Baseline: ${Object.keys(baseline).length} pre-existing file(s) over ${MAX_TOKENS} tokens. Split them to ratchet the limit down.`
+  );
+  for (const file of Object.keys(baseline)) {
+    const current = measured.find((entry) => entry.file === file);
+    if (current) console.log(`  ${file}: ~${current.tokens} tokens`);
+  }
+}
+
+if (stale.length > 0) {
+  console.error(
+    `\nThese entries in scripts/oversize-baseline.json are stale — the file is gone or under the limit. Delete them:\n`
+  );
+  for (const file of stale) console.error(`  ${file}`);
+  process.exit(1);
+}
 
 if (oversized.length > 0) {
   console.error(`These files are over ${MAX_TOKENS} tokens (bytes / 4):\n`);
   for (const { file, tokens } of oversized) {
-    console.error(`  ${file}: ~${tokens} tokens`);
+    const baselined = baseline[file];
+    const suffix = baselined !== undefined ? ` (baseline ${baselined})` : "";
+    console.error(`  ${file}: ~${tokens} tokens${suffix}`);
   }
   console.error(`
 Split each file before you commit. Do not delete code or squash it onto fewer
