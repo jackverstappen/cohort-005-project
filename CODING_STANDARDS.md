@@ -113,3 +113,21 @@ Name and extract until a comment is unnecessary. A comment earns its place
 only for a _why_ the code cannot express: a constraint, a decision, a link to
 the ADR behind it. A comment that restates _what_ the code does goes stale the
 first time the code changes.
+
+## New code has tests covering it
+
+Every new function, branch, or action an agent or reviewer can point to
+needs a test that runs it. "New" means added in this diff; existing code is
+not in scope. An access check landed untested once and a quiz on another
+lesson could be submitted through the wrong route for a week. If arranging
+the test is hard (for example, the module imports the global `db`), fix the
+seam before the feature, not after.
+
+## A diff stays inside its ticket's scope
+
+A UI ticket produces a UI diff. If the work exposes a necessary refactor —
+a file over the token limit, a missing module, a dead code path — stop,
+open a separate ticket for the refactor, and either rebase the UI diff on
+top once the refactor lands or justify the bundled diff in the PR body. The
+default is one ticket, one concern. A reviewer should be able to read the
+diff with the ticket beside it and not need a third tab.

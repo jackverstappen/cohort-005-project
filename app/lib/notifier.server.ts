@@ -100,9 +100,13 @@ let cachedDefaultTransport: NotificationTransport | undefined;
 function defaultTransport(): NotificationTransport {
   if (cachedDefaultTransport) return cachedDefaultTransport;
   const apiKey = process.env.NOVU_API_KEY;
+  // NOTIFICATIONS_OUTBOX_DIR lets a test pin the outbox without `process.chdir`,
+  // which Stryker's worker-thread runner rejects.
+  const outboxDir =
+    process.env.NOTIFICATIONS_OUTBOX_DIR ?? ".notifications-outbox";
   cachedDefaultTransport = apiKey
     ? novuTransport(apiKey)
-    : outboxTransport(".notifications-outbox");
+    : outboxTransport(outboxDir);
   return cachedDefaultTransport;
 }
 
