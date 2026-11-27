@@ -57,6 +57,7 @@
     "@biomejs/biome": "^2.5.15",
     "@clack/prompts": "^1.7.0",
     "@oxlint/plugins": "^1.85.0",
+    "oxlint": "^1.85.0",
     "@react-router/dev": "8.3.0",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",

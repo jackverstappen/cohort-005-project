@@ -52,7 +52,6 @@ export function DevUI({
   const [open, setOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
-  const switcherRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;

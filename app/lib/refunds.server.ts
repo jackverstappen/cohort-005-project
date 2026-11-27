@@ -38,10 +38,6 @@ import {
   REFUND_WINDOW_DAYS,
   type RuleBreak,
 } from "~/lib/refund-rules";
-import { notify as defaultNotify, type Notification } from "~/lib/notifier.server";
-
-type Notify = (notification: Notification) => Promise<void>;
-
 // docs/adr/0001–0004 explain why Refunds work the way they do.
 
 export type Db = BetterSQLite3Database<typeof schema>;
@@ -687,7 +683,7 @@ export async function approveRefundRequest(
   platformAdminId: number,
   note: string | null,
   now: Date,
-  notify: Notify = defaultNotify
+  notifications: Notifications
 ): Promise<DecisionResult> {
   type Decided = { result: DecisionResult; purchase?: Purchase };
 
@@ -762,7 +758,7 @@ export async function approveRefundRequest(
   });
 
   if (decided.result.ok && decided.purchase) {
-    await notifyDecision(db, decided.purchase, "approved", notify);
+    await notifyDecision(db, refundRequestId, notifications);
   }
 
   return decided.result;
@@ -779,7 +775,7 @@ export async function declineRefundRequest(
   platformAdminId: number,
   note: string,
   now: Date,
-  notify: Notify = defaultNotify
+  notifications: Notifications
 ): Promise<DecisionResult> {
   const trimmedNote = note.trim();
 
@@ -822,39 +818,10 @@ export async function declineRefundRequest(
   });
 
   if (decided.result.ok && decided.purchase) {
-    await notifyDecision(db, decided.purchase, "declined", notify);
+    await notifyDecision(db, refundRequestId, notifications);
   }
 
   return decided.result;
-}
-
-async function notifyDecision(
-  db: Queryable,
-  purchase: Purchase,
-  decision: "approved" | "declined",
-  notify: Notify
-): Promise<void> {
-  const buyer = db
-    .select()
-    .from(users)
-    .where(eq(users.id, purchase.userId))
-    .get();
-  const course = db
-    .select()
-    .from(courses)
-    .where(eq(courses.id, purchase.courseId))
-    .get();
-
-  await notify({
-    subscriberId: String(purchase.userId),
-    category: "refund-status",
-    payload: {
-      courseTitle: course?.title ?? "your course",
-      buyerName: buyer?.name ?? "",
-      amount: purchase.amountPaid,
-      decision,
-    },
-  });
 }
 
 /** The email the buyer gets once their Refund Request is decided. */
