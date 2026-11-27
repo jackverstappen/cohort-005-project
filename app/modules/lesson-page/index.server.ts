@@ -24,4 +24,5 @@ export {
   getBestAttempt,
   getQuizByLessonId,
   getQuizWithQuestions,
+  isQuizOnLesson,
 } from "./lib/quiz";

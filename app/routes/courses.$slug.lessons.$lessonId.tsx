@@ -31,13 +31,12 @@ import {
   getQuizByLessonId,
   getQuizWithQuestions,
   getUserById,
+  isQuizOnLesson,
   markLessonComplete,
   markLessonInProgress,
   renderThread,
 } from "~/modules/lesson-page/index.server";
 import { db } from "~/db";
-import { quizzes } from "~/db/schema";
-import { eq } from "drizzle-orm";
 import { Button } from "~/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 import { renderMarkdown } from "~/lib/markdown.server";
@@ -429,8 +428,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     }
     // Scope the quiz to this lesson so a quiz elsewhere can't be reached by
     // posting its id to this route.
-    const quiz = db.select().from(quizzes).where(eq(quizzes.id, quizId)).get();
-    if (!quiz || quiz.lessonId !== lessonId) {
+    if (!isQuizOnLesson(quizId, lessonId)) {
       throw data("Quiz not found", { status: 404 });
     }
 
