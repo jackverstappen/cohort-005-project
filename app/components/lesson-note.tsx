@@ -8,6 +8,7 @@ import { cn, formatRelativeTime } from "~/lib/utils";
 import {
   describeNoteEditor,
   type NoteEditorStatus,
+  type NoteEditorView,
 } from "~/modules/lesson-note";
 
 export function LessonNote({
@@ -17,11 +18,14 @@ export function LessonNote({
 }) {
   const fetcher = useFetcher<{ ok: boolean; error?: string }>();
   const [draft, setDraft] = useState(note?.body ?? "");
+  const [submittedDraft, setSubmittedDraft] = useState<string | null>(null);
   const view = describeNoteEditor({
     savedBody: note?.body ?? null,
     draft,
     saving: fetcher.state !== "idle",
-    error: fetcher.data?.error,
+    // A save error is about the text that was sent; once the Student edits
+    // it, the error no longer describes what is on screen.
+    error: draft === submittedDraft ? fetcher.data?.error : undefined,
   });
 
   return (
@@ -29,7 +33,11 @@ export function LessonNote({
       <CardContent className="p-6">
         <LessonNoteHeader />
 
-        <fetcher.Form method="post" className="space-y-2">
+        <fetcher.Form
+          method="post"
+          className="space-y-2"
+          onSubmit={() => setSubmittedDraft(draft)}
+        >
           <input type="hidden" name="intent" value="save-note" />
           <Textarea
             name="body"
@@ -46,20 +54,26 @@ export function LessonNote({
               {view.status.kind === "saving" ? "Saving..." : "Save note"}
             </Button>
             <NoteStatus status={view.status} updatedAt={note?.updatedAt} />
-            <span
-              className={cn(
-                "ml-auto text-xs",
-                view.tooLong ? "text-destructive" : "text-muted-foreground"
-              )}
-            >
-              {view.length} / {view.max}
-            </span>
+            <NoteLength view={view} />
           </div>
 
           <SavedPageHint />
         </fetcher.Form>
       </CardContent>
     </Card>
+  );
+}
+
+function NoteLength({ view }: { view: NoteEditorView }) {
+  return (
+    <span
+      className={cn(
+        "ml-auto text-xs",
+        view.tooLong ? "text-destructive" : "text-muted-foreground"
+      )}
+    >
+      {view.length} / {view.max}
+    </span>
   );
 }
 
