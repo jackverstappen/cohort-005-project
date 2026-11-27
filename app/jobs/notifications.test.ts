@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import { notify, outboxTransport } from "~/lib/notifier.server";
+import { markdown } from "~/lib/text";
 import { runNotificationsJob } from "./notifications";
 
 type TestDb = ReturnType<typeof createTestDb>;
@@ -55,8 +56,7 @@ describe("re-engagement scheduled job", () => {
 
     const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
     const transport = outboxTransport(directory);
-    const injected = (n: Parameters<typeof notify>[0]) =>
-      notify(n, transport);
+    const injected = (n: Parameters<typeof notify>[0]) => notify(n, transport);
 
     await runNotificationsJob(db, NOW, injected);
 
@@ -173,8 +173,7 @@ describe("completion nudge scheduled job", () => {
 
     const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
     const transport = outboxTransport(directory);
-    const injected = (n: Parameters<typeof notify>[0]) =>
-      notify(n, transport);
+    const injected = (n: Parameters<typeof notify>[0]) => notify(n, transport);
 
     await runNotificationsJob(db, NOW, injected);
 
@@ -292,7 +291,9 @@ describe("completion nudge scheduled job", () => {
     const files = readdirSync(directory);
     const teamFiles = files.filter((f) => f.includes("team-progress"));
     expect(teamFiles).toHaveLength(1);
-    const written = JSON.parse(readFileSync(join(directory, teamFiles[0]), "utf8"));
+    const written = JSON.parse(
+      readFileSync(join(directory, teamFiles[0]), "utf8")
+    );
     expect(written).toMatchObject({
       subscriberId: String(admin.id),
       category: "team-progress",
@@ -401,7 +402,7 @@ describe("completion nudge scheduled job", () => {
         title: "Course Two",
         slug: "course-two",
         description: "x",
-        salesCopy: "x",
+        salesCopy: markdown("x"),
         instructorId: base.instructor.id,
         categoryId: base.category.id,
         status: schema.CourseStatus.Published,

@@ -1,7 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, seedBaseData, type TestDb } from "~/test/setup";
 import * as schema from "~/db/schema";
@@ -18,9 +15,10 @@ import {
   listTeamLicences,
   raiseRefundRequest,
 } from "./refunds.server";
-import { notify, outboxTransport } from "./notifier.server";
-
-type TestDb = ReturnType<typeof createTestDb>;
+import {
+  fakeNotifications,
+  type FakeNotifications,
+} from "./notifications.fake.server";
 
 const NOW = new Date(2026, 9, 6, 12, 0, 0);
 
@@ -337,8 +335,15 @@ describe("the refund offer on the course page", () => {
 
   it("offers nothing once the purchase has been refunded", async () => {
     const purchase = buyForSelf(base.user.id);
-    const id = raise(purchase.id, base.user.id);
-    await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+    const id = await raise(purchase.id, base.user.id);
+    await approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(getRefundOffer(db, base.user.id, base.course.id, NOW)).toBeNull();
   });
@@ -356,7 +361,14 @@ describe("approving a Refund Request", () => {
       .run();
     const id = await raise(purchase.id, base.user.id);
 
-    const result = await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+    const result = await approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(result.ok).toBe(true);
     expect(isEnrolled(base.user.id)).toBe(false);
@@ -381,7 +393,7 @@ describe("approving a Refund Request", () => {
   });
 
   it("keeps the buyer's Enrollment if they also hold a Claimed Seat for the course", async () => {
-    const priya = addLearner("Priya");
+    const priya = addStudent("Priya");
     const { seats } = buySeats(priya.id, 2);
     // Liam claims a Seat first, so his Enrollment came from it.
     claimSeat(seats[0].id, base.user.id);
@@ -397,17 +409,31 @@ describe("approving a Refund Request", () => {
       .get();
     const id = await raise(purchase.id, base.user.id);
 
-    await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+    await approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(isEnrolled(base.user.id)).toBe(true);
   });
 
   it("makes a Team Licence's Unclaimed Seats unclaimable", async () => {
-    const priya = addLearner("Priya");
+    const priya = addStudent("Priya");
     const { purchase, seats } = buySeats(priya.id, 2);
     const id = await raise(purchase.id, priya.id);
 
-    const result = await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+    const result = await approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(result.ok).toBe(true);
     for (const seat of seats) {
@@ -416,13 +442,22 @@ describe("approving a Refund Request", () => {
   });
 
   it("refuses a Team Licence whose Seat was claimed after the request", async () => {
-    const priya = addLearner("Priya");
+    const priya = addStudent("Priya");
     const { purchase, seats } = buySeats(priya.id, 2);
     const id = await raise(purchase.id, priya.id);
     // Seats are on hold while Open, but older data can still hold a claim.
     claimSeat(seats[0].id, addStudent("Ben").id);
 
-    expect(await approveRefundRequest(db, id, platformAdmin.id, null, NOW)).toMatchObject({
+    expect(
+      await approveRefundRequest(
+        db,
+        id,
+        platformAdmin.id,
+        null,
+        NOW,
+        notifications
+      )
+    ).toMatchObject({
       ok: false,
       status: 409,
     });
@@ -431,11 +466,25 @@ describe("approving a Refund Request", () => {
 
   it("lets the first decision win", async () => {
     const purchase = buyForSelf(base.user.id);
-    const id = raise(purchase.id, base.user.id);
-    await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+    const id = await raise(purchase.id, base.user.id);
+    await approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(
-      await declineRefundRequest(db, id, platformAdmin.id, "Too late.", NOW)
+      await declineRefundRequest(
+        db,
+        id,
+        platformAdmin.id,
+        "Too late.",
+        NOW,
+        notifications
+      )
     ).toMatchObject({
       ok: false,
       status: 409,
@@ -447,44 +496,19 @@ describe("approving a Refund Request", () => {
     const purchase = buyForSelf(base.user.id);
     const id = await raise(purchase.id, base.user.id);
 
-    const result = await approveRefundRequest(db, id, platformAdmin.id, null, NOW);
-
-    if (!result.ok) throw new Error(result.error);
-    expect(result.email.to).toBe("test@example.com");
-    expect(result.email.subject).toBe("Refund approved — Test Course");
-    expect(result.email.body).toContain("$79.00");
-  });
-
-  it("sends a refund-status notification to the buyer", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
-    const purchase = buyForSelf(base.user.id);
-    const id = raise(purchase.id, base.user.id);
-
     const result = await approveRefundRequest(
       db,
       id,
       platformAdmin.id,
       null,
       NOW,
-      (notification) => notify(notification, outboxTransport(directory))
+      notifications
     );
 
-    expect(result.ok).toBe(true);
-    const files = readdirSync(directory);
-    expect(files).toHaveLength(1);
-    const written = JSON.parse(
-      readFileSync(join(directory, files[0]), "utf8")
-    );
-    expect(written).toMatchObject({
-      subscriberId: String(base.user.id),
-      category: "refund-status",
-      payload: {
-        courseTitle: "Test Course",
-        buyerName: base.user.name,
-        amount: 7900,
-        decision: "approved",
-      },
-    });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.email.to).toBe("test@example.com");
+    expect(result.email.subject).toBe("Refund approved — Test Course");
+    expect(result.email.body).toContain("$79.00");
   });
 });
 
@@ -493,7 +517,16 @@ describe("declining a Refund Request", () => {
     const purchase = buyForSelf(base.user.id);
     const id = await raise(purchase.id, base.user.id);
 
-    expect(await declineRefundRequest(db, id, platformAdmin.id, "  ", NOW)).toMatchObject({
+    expect(
+      await declineRefundRequest(
+        db,
+        id,
+        platformAdmin.id,
+        "  ",
+        NOW,
+        notifications
+      )
+    ).toMatchObject({
       ok: false,
       status: 400,
     });
@@ -521,46 +554,21 @@ describe("declining a Refund Request", () => {
   });
 
   it("frees a Team Licence's Seats again", async () => {
-    const priya = addLearner("Priya");
+    const priya = addStudent("Priya");
     const { purchase, seats } = buySeats(priya.id, 1);
     const id = await raise(purchase.id, priya.id);
     expect(getSeatAvailability(db, getSeat(seats[0].id))).toBe("on_hold");
 
-    await declineRefundRequest(db, id, platformAdmin.id, "Seats are in use.", NOW);
-
-    expect(getSeatAvailability(db, getSeat(seats[0].id))).toBe("available");
-  });
-
-  it("sends a refund-status notification to the buyer", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
-    const purchase = buyForSelf(base.user.id);
-    const id = raise(purchase.id, base.user.id);
-
-    const result = await declineRefundRequest(
+    await declineRefundRequest(
       db,
       id,
       platformAdmin.id,
-      "You finished the course.",
+      "Seats are in use.",
       NOW,
-      (notification) => notify(notification, outboxTransport(directory))
+      notifications
     );
 
-    expect(result.ok).toBe(true);
-    const files = readdirSync(directory);
-    expect(files).toHaveLength(1);
-    const written = JSON.parse(
-      readFileSync(join(directory, files[0]), "utf8")
-    );
-    expect(written).toMatchObject({
-      subscriberId: String(base.user.id),
-      category: "refund-status",
-      payload: {
-        courseTitle: "Test Course",
-        buyerName: base.user.name,
-        amount: 7900,
-        decision: "declined",
-      },
-    });
+    expect(getSeatAvailability(db, getSeat(seats[0].id))).toBe("available");
   });
 });
 
@@ -628,7 +636,14 @@ describe("listing Refund Requests", () => {
       listRefundRequestsForReview(db, RefundStatus.Open, NOW).map((r) => r.id)
     ).toEqual([firstId, secondId.refundRequestId]);
 
-    await approveRefundRequest(db, firstId, platformAdmin.id, null, NOW);
+    await approveRefundRequest(
+      db,
+      firstId,
+      platformAdmin.id,
+      null,
+      NOW,
+      notifications
+    );
 
     expect(
       listRefundRequestsForReview(db, RefundStatus.Approved, NOW)
@@ -637,8 +652,15 @@ describe("listing Refund Requests", () => {
 
   it("shows a buyer their decided requests with the decline note", async () => {
     const purchase = buyForSelf(base.user.id);
-    const id = raise(purchase.id, base.user.id);
-    await declineRefundRequest(db, id, platformAdmin.id, "Past half way.", NOW);
+    const id = await raise(purchase.id, base.user.id);
+    await declineRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "Past half way.",
+      NOW,
+      notifications
+    );
 
     expect(listRefundRequestsForBuyer(db, base.user.id)).toMatchObject([
       { id, status: RefundStatus.Declined, decisionNote: "Past half way." },

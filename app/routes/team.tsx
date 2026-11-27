@@ -171,10 +171,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
-  const currentUserId = await getCurrentUserId(request);
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel.", { status: 401 });
-  }
+  const { id: currentUserId } = await people.requirePerson(request);
 
   const form = await request.formData();
   const parsed = parseFormData(form, grantSeatActionSchema);
@@ -387,7 +384,10 @@ type TeamLicence = Route.ComponentProps["loaderData"]["teamLicences"][number];
 
 function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
   const fetcher = useFetcher<{ errors?: Record<string, string> }>();
-  const grantFetcher = useFetcher<{ errors?: Record<string, string>; ok?: boolean }>();
+  const grantFetcher = useFetcher<{
+    errors?: Record<string, string>;
+    ok?: boolean;
+  }>();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [grantEmail, setGrantEmail] = useState("");
   const isSubmitting = fetcher.state !== "idle";
@@ -447,9 +447,17 @@ function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
 
         {refundRequest?.status !== RefundStatus.Open &&
           refundRequest?.status !== RefundStatus.Approved && (
-            <grantFetcher.Form method="post" action="/team" className="mt-3 flex gap-2">
+            <grantFetcher.Form
+              method="post"
+              action="/team"
+              className="mt-3 flex gap-2"
+            >
               <input type="hidden" name="intent" value="grant-seat" />
-              <input type="hidden" name="teamLicenceId" value={licence.purchaseId} />
+              <input
+                type="hidden"
+                name="teamLicenceId"
+                value={licence.purchaseId}
+              />
               <input
                 type="email"
                 name="studentEmail"
@@ -465,12 +473,13 @@ function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
             </grantFetcher.Form>
           )}
 
-        {refundRequest?.status === RefundStatus.Declined && refundRequest.decisionNote && (
-          <p className="mt-3 rounded-md bg-muted p-2 text-sm">
-            <span className="font-medium">Refund declined: </span>
-            {refundRequest.decisionNote}
-          </p>
-        )}
+        {refundRequest?.status === RefundStatus.Declined &&
+          refundRequest.decisionNote && (
+            <p className="mt-3 rounded-md bg-muted p-2 text-sm">
+              <span className="font-medium">Refund declined: </span>
+              {refundRequest.decisionNote}
+            </p>
+          )}
 
         {licence.canRequestRefund && isFormOpen && (
           <fetcher.Form

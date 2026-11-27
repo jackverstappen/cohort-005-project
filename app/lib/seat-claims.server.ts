@@ -1,13 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
-import {
-  coupons,
-  courses,
-  enrollments,
-  purchases,
-  users,
-} from "~/db/schema";
+import { coupons, courses, enrollments, purchases, users } from "~/db/schema";
 import { getSeatAvailability } from "~/lib/refunds.server";
 import {
   notify as defaultNotify,
@@ -32,6 +26,19 @@ export const SEAT_REFUNDED =
 export type RedeemResult =
   | { ok: true; enrollment: typeof enrollments.$inferSelect }
   | { ok: false; error: string };
+
+export function isSeatCountryLocked(
+  db: Db,
+  coupon: typeof coupons.$inferSelect,
+  userCountry: string
+): boolean {
+  const purchase = db
+    .select()
+    .from(purchases)
+    .where(eq(purchases.id, coupon.purchaseId))
+    .get();
+  return !!(purchase?.country && purchase.country !== userCountry);
+}
 
 export async function redeemCoupon(
   db: Db,
@@ -65,13 +72,7 @@ export async function redeemCoupon(
     return { ok: false, error: "You are already enrolled in this course" };
   }
 
-  const purchase = db
-    .select()
-    .from(purchases)
-    .where(eq(purchases.id, coupon.purchaseId))
-    .get();
-
-  if (purchase?.country && purchase.country !== userCountry) {
+  if (isSeatCountryLocked(db, coupon, userCountry)) {
     return {
       ok: false,
       error:

@@ -7,7 +7,8 @@ import { people } from "~/modules/permissions/person.server";
 import { resolveCountry } from "~/lib/country.server";
 import { parseParams, parseFormData } from "~/lib/validation";
 import { getSeatAvailability } from "~/lib/refunds.server";
-import { redeemCoupon } from "~/lib/seat-claims.server";
+import { isEnrolled } from "~/lib/enrollments.server";
+import { isSeatCountryLocked, redeemCoupon } from "~/lib/seat-claims.server";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
@@ -22,18 +23,6 @@ function getCourseById(id: number) {
 
 function getCouponByCode(code: string) {
   return db.select().from(coupons).where(eq(coupons.code, code)).get();
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  const existing = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-
-  return !!existing;
 }
 
 const SEAT_ON_HOLD =
@@ -89,10 +78,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
         : null;
 
   // Check the Country Lock upfront so we can show a clear message
+  const userCountry = await resolveCountry(request);
   const countryMismatch =
     !alreadyRedeemed &&
     !alreadyEnrolled &&
-    isSeatCountryLocked(db, coupon, await resolveCountry(request));
+    userCountry !== null &&
+    isSeatCountryLocked(db, coupon, userCountry);
 
   return {
     course: { id: course.id, title: course.title, slug: course.slug },
