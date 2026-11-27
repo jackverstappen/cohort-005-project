@@ -1,14 +1,12 @@
 import { Outlet } from "react-router";
+import { useEffect, useRef } from "react";
+import { NovuProvider, useNovu } from "@novu/react";
+import { toast, Toaster } from "sonner";
 import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
 import { DevUI } from "~/components/dev-ui";
-import { NotificationFeedProvider } from "~/components/notification-feed";
-import {
-  defaultNotifications,
-  tolerateNotificationFailure,
-} from "~/lib/notifications.server";
-import { Toaster } from "sonner";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
+import { signSubscriber } from "~/lib/novu.server";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { eq, and, or, sql, desc } from "drizzle-orm";
 import { db } from "~/db";
@@ -207,6 +205,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       })
     : [];
 
+  const subscriberId = currentUserId ? String(currentUserId) : null;
+
   return {
     users: users.map((u) => ({ id: u.id, name: u.name, role: u.role })),
     currentUser: currentUser
@@ -222,19 +222,38 @@ export async function loader({ request }: Route.LoaderArgs) {
     countryTierInfo,
     countries: COUNTRIES,
     isTeamAdmin: currentUserId ? isTeamAdmin(currentUserId) : false,
-    notificationFeed: currentUserId
-      ? await getFeedCredentials(currentUserId)
-      : null,
+    novu: {
+      subscriberId,
+      subscriberHash: subscriberId ? signSubscriber(subscriberId) : undefined,
+      applicationIdentifier: process.env.NOVU_APPLICATION_IDENTIFIER ?? "",
+    },
   };
 }
 
-/** A missing feed must never break the page, so a failure is only logged. */
-async function getFeedCredentials(userId: number) {
-  return tolerateNotificationFailure(
-    "Could not sign a feed token",
-    null,
-    async () => (await defaultNotifications()).feedCredentials(userId)
-  );
+/**
+ * Subscribes to Novu's real-time `notifications.notification_received` event
+ * and fires a Sonner toast for each unread live arrival. The initial list
+ * load does not pass through this handler — only genuine arrivals do.
+ */
+function NovuLiveToasts() {
+  const novu = useNovu();
+  const mountedAt = useRef(Date.now());
+
+  useEffect(() => {
+    const off = novu.on("notifications.notification_received", (event) => {
+      const n = event?.result;
+      if (!n || n.isRead) return;
+      // Guard against replays of history delivered just after mount.
+      const createdMs = new Date(n.createdAt).getTime();
+      if (!Number.isNaN(createdMs) && createdMs < mountedAt.current) return;
+      toast(n.subject ?? n.body);
+    });
+    return () => {
+      off();
+    };
+  }, [novu]);
+
+  return null;
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
@@ -246,29 +265,43 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countryTierInfo,
     countries,
     isTeamAdmin: userIsTeamAdmin,
-    notificationFeed,
+    novu,
   } = loaderData;
 
+  const layout = (
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar
+        currentUser={currentUser}
+        recentCourses={recentCourses}
+        isTeamAdmin={userIsTeamAdmin}
+      />
+      <main className="flex-1 overflow-y-auto">
+        <Outlet />
+      </main>
+      <DevUI
+        users={users}
+        currentUser={currentUser}
+        devCountry={devCountry}
+        countryTierInfo={countryTierInfo}
+        countries={countries}
+      />
+      <Toaster position="bottom-right" richColors closeButton />
+    </div>
+  );
+
+  // Only wrap in NovuProvider when we have a signed-in user and an app id.
+  // Without either, Novu's inbox cannot be identified; render layout as-is so
+  // the (tiny) subset of unauthenticated paths through this layout still work.
+  if (!novu.subscriberId || !novu.applicationIdentifier) return layout;
+
   return (
-    <NotificationFeedProvider credentials={notificationFeed}>
-      <div className="flex h-screen overflow-hidden">
-        <Sidebar
-          currentUser={currentUser}
-          recentCourses={recentCourses}
-          isTeamAdmin={userIsTeamAdmin}
-        />
-        <main className="flex-1 overflow-y-auto">
-          <Outlet />
-        </main>
-        <DevUI
-          users={users}
-          currentUser={currentUser}
-          devCountry={devCountry}
-          countryTierInfo={countryTierInfo}
-          countries={countries}
-        />
-        <Toaster position="bottom-right" richColors closeButton />
-      </div>
-    </NotificationFeedProvider>
+    <NovuProvider
+      applicationIdentifier={novu.applicationIdentifier}
+      subscriber={novu.subscriberId}
+      subscriberHash={novu.subscriberHash}
+    >
+      <NovuLiveToasts />
+      {layout}
+    </NovuProvider>
   );
 }

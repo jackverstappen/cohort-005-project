@@ -38,6 +38,9 @@ import {
   REFUND_WINDOW_DAYS,
   type RuleBreak,
 } from "~/lib/refund-rules";
+import { notify as defaultNotify, type Notification } from "~/lib/notifier.server";
+
+type Notify = (notification: Notification) => Promise<void>;
 
 // docs/adr/0001–0004 explain why Refunds work the way they do.
 
@@ -684,11 +687,13 @@ export async function approveRefundRequest(
   platformAdminId: number,
   note: string | null,
   now: Date,
-  notifications: Notifications
+  notify: Notify = defaultNotify
 ): Promise<DecisionResult> {
-  const result = db.transaction((tx): DecisionResult => {
+  type Decided = { result: DecisionResult; purchase?: Purchase };
+
+  const decided = db.transaction((tx): Decided => {
     const found = findOpenRefundRequest(tx, refundRequestId);
-    if (!found.ok) return found;
+    if (!found.ok) return { result: found };
 
     const { purchase } = found;
     const seats = getSeats(tx, purchase.id);
@@ -696,10 +701,12 @@ export async function approveRefundRequest(
     if (kindOf(seats) === "team_licence") {
       if (seats.some(isClaimed)) {
         return {
-          ok: false,
-          status: 409,
-          error:
-            "A Seat on this Team Licence has been claimed, so this refund request can only be declined.",
+          result: {
+            ok: false,
+            status: 409,
+            error:
+              "A Seat on this Team Licence has been claimed, so this refund request can only be declined.",
+          },
         };
       }
 
@@ -746,13 +753,19 @@ export async function approveRefundRequest(
       .run();
 
     return {
-      ok: true,
-      email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      result: {
+        ok: true,
+        email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      },
+      purchase,
     };
   });
 
-  if (result.ok) await notifyDecision(db, refundRequestId, notifications);
-  return result;
+  if (decided.result.ok && decided.purchase) {
+    await notifyDecision(db, decided.purchase, "approved", notify);
+  }
+
+  return decided.result;
 }
 
 /**
@@ -766,7 +779,7 @@ export async function declineRefundRequest(
   platformAdminId: number,
   note: string,
   now: Date,
-  notifications: Notifications
+  notify: Notify = defaultNotify
 ): Promise<DecisionResult> {
   const trimmedNote = note.trim();
 
@@ -778,9 +791,11 @@ export async function declineRefundRequest(
     };
   }
 
-  const result = db.transaction((tx): DecisionResult => {
+  type Decided = { result: DecisionResult; purchase?: Purchase };
+
+  const decided = db.transaction((tx): Decided => {
     const found = findOpenRefundRequest(tx, refundRequestId);
-    if (!found.ok) return found;
+    if (!found.ok) return { result: found };
 
     tx.update(refunds)
       .set({
@@ -793,18 +808,53 @@ export async function declineRefundRequest(
       .run();
 
     return {
-      ok: true,
-      email: buildDecisionEmail(
-        tx,
-        found.purchase,
-        RefundStatus.Declined,
-        trimmedNote
-      ),
+      result: {
+        ok: true,
+        email: buildDecisionEmail(
+          tx,
+          found.purchase,
+          RefundStatus.Declined,
+          trimmedNote
+        ),
+      },
+      purchase: found.purchase,
     };
   });
 
-  if (result.ok) await notifyDecision(db, refundRequestId, notifications);
-  return result;
+  if (decided.result.ok && decided.purchase) {
+    await notifyDecision(db, decided.purchase, "declined", notify);
+  }
+
+  return decided.result;
+}
+
+async function notifyDecision(
+  db: Queryable,
+  purchase: Purchase,
+  decision: "approved" | "declined",
+  notify: Notify
+): Promise<void> {
+  const buyer = db
+    .select()
+    .from(users)
+    .where(eq(users.id, purchase.userId))
+    .get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+
+  await notify({
+    subscriberId: String(purchase.userId),
+    category: "refund-status",
+    payload: {
+      courseTitle: course?.title ?? "your course",
+      buyerName: buyer?.name ?? "",
+      amount: purchase.amountPaid,
+      decision,
+    },
+  });
 }
 
 /** The email the buyer gets once their Refund Request is decided. */

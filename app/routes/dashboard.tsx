@@ -27,7 +27,8 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
-import { isRouteErrorResponse } from "react-router";
+import { NotificationBell, NudgeCards } from "~/components/notification-nudges";
+import { data, isRouteErrorResponse } from "react-router";
 
 function getUserEnrolledCourses(userId: number) {
   return db
@@ -283,6 +284,8 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
+      <NotificationBell />
+      <NudgeCards />
       {/* Breadcrumb */}
       <nav className="mb-6 text-sm text-muted-foreground">
         <Link to="/" className="hover:text-foreground">

@@ -52,18 +52,18 @@ export function DevUI({
   const [open, setOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  const switcherRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    function handlePointerDown(event: PointerEvent) {
+    const onPointerDown = (event: PointerEvent) => {
       if (!switcherRef.current?.contains(event.target as Node)) {
         setOpen(false);
       }
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
-
   if (minimized) {
     return (
       <div className="fixed bottom-4 right-4 z-50">
@@ -138,6 +138,7 @@ export function DevUI({
                   <input type="hidden" name="userId" value={user.id} />
                   <button
                     type="submit"
+                    onClick={() => setOpen(false)}
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
                       currentUser?.id === user.id && "bg-accent"

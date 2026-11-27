@@ -46,6 +46,7 @@ export default [
     route("admin/refunds", "routes/admin.refunds.tsx"),
     route("saved", "routes/saved.tsx"),
     route("settings", "routes/settings.tsx"),
+    route("settings/notifications", "routes/settings.notifications.tsx"),
     route("team", "routes/team.tsx"),
     route("redeem/:code", "routes/redeem.$code.tsx"),
   ]),

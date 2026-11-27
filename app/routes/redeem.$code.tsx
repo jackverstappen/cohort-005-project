@@ -7,14 +7,7 @@ import { people } from "~/modules/permissions/person.server";
 import { resolveCountry } from "~/lib/country.server";
 import { parseParams, parseFormData } from "~/lib/validation";
 import { getSeatAvailability } from "~/lib/refunds.server";
-import { isEnrolled } from "~/lib/enrollments.server";
-import { defaultNotifications } from "~/lib/notifications.server";
-import {
-  claimSeat,
-  isSeatCountryLocked,
-  SEAT_ON_HOLD,
-  SEAT_REFUNDED,
-} from "~/lib/seat-claims.server";
+import { redeemCoupon } from "~/lib/seat-claims.server";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
@@ -30,6 +23,23 @@ function getCourseById(id: number) {
 function getCouponByCode(code: string) {
   return db.select().from(coupons).where(eq(coupons.code, code)).get();
 }
+
+function isUserEnrolled(userId: number, courseId: number) {
+  const existing = db
+    .select()
+    .from(enrollments)
+    .where(
+      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
+    )
+    .get();
+
+  return !!existing;
+}
+
+const SEAT_ON_HOLD =
+  "This seat can't be claimed right now. Ask the person who shared it with you.";
+const SEAT_REFUNDED =
+  "This seat is no longer available. Ask the person who shared it with you.";
 
 const redeemParamsSchema = z.object({
   code: z.string().min(1),
@@ -107,14 +117,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   }
 
   const userCountry = await resolveCountry(request);
-  const result = await claimSeat(
-    db,
-    code,
-    currentUserId,
-    userCountry,
-    new Date(),
-    await defaultNotifications()
-  );
+  const result = await redeemCoupon(db, code, currentUserId, userCountry ?? "");
 
   if (!result.ok) {
     return data({ error: result.error }, { status: 400 });

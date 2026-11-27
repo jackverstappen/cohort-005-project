@@ -292,6 +292,11 @@ export const coupons = sqliteTable("coupons", {
     .references(() => purchases.id),
   redeemedByUserId: integer("redeemed_by_user_id").references(() => users.id),
   redeemedAt: text("redeemed_at"),
+  // Set when a Team Admin grants this Seat to a specific Student. The student
+  // can then claim it at /redeem/<code>. Distinct from redeemedByUserId, which
+  // is only set once the student actually visits the claim link.
+  grantedToUserId: integer("granted_to_user_id").references(() => users.id),
+  grantedAt: text("granted_at"),
   // Set on every Unclaimed Seat when its Team Licence's Refund Request is
   // approved. The Seat can never be claimed after that.
   refundedAt: text("refunded_at"),
@@ -358,6 +363,26 @@ export const comments = sqliteTable(
   (table) => [
     index("comments_lesson_idx").on(table.lessonId),
     index("comments_parent_idx").on(table.parentId),
+  ]
+);
+
+export const notificationsSent = sqliteTable(
+  "notifications_sent",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    subscriberId: text("subscriber_id").notNull(),
+    category: text("category").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    sentAt: text("sent_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [
+    uniqueIndex("notifications_sent_subscriber_category_key_unique").on(
+      table.subscriberId,
+      table.category,
+      table.idempotencyKey
+    ),
   ]
 );
 
