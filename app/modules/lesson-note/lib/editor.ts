@@ -1,12 +1,9 @@
 import { MAX_NOTE_LENGTH } from "~/lib/notes";
 
 export type NoteEditorInput = {
-  /** The body the server holds, or null when the Student has no Note yet. */
   savedBody: string | null;
-  /** What is in the textarea right now. */
   draft: string;
   saving: boolean;
-  /** The error from the last save attempt, if it failed. */
   error?: string;
 };
 
@@ -25,7 +22,7 @@ export type NoteEditorView = {
   status: NoteEditorStatus;
 };
 
-export function describe({
+export function describeNoteEditor({
   savedBody,
   draft,
   saving,
