@@ -77,8 +77,8 @@ export default function NotificationsSettings({
             </Inbox>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Notification preferences are unavailable — NOVU_APPLICATION_IDENTIFIER
-              is not configured.
+              Notification preferences are unavailable —
+              NOVU_APPLICATION_IDENTIFIER is not configured.
             </p>
           )}
         </CardContent>
@@ -100,8 +100,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           : "Please select a user from the DevUI panel.";
     } else {
       title = `Error ${error.status}`;
-      message =
-        typeof error.data === "string" ? error.data : error.statusText;
+      message = typeof error.data === "string" ? error.data : error.statusText;
     }
   }
 

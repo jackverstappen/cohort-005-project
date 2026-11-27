@@ -39,9 +39,9 @@ describe("DEFAULT_NOTIFICATION_PREFERENCES", () => {
       (p) => p.category === category
     ) as CategoryPreference | undefined;
     expect(pref).toBeDefined();
-    expect(pref!.channels.in_app).toBe(want.in_app);
-    expect(pref!.channels.email).toBe(want.email);
-    expect(pref!.critical).toBe(want.critical);
+    expect(pref?.channels.in_app).toBe(want.in_app);
+    expect(pref?.channels.email).toBe(want.email);
+    expect(pref?.critical).toBe(want.critical);
   });
 
   it("flags exactly refund-status and seat-invite as critical", () => {

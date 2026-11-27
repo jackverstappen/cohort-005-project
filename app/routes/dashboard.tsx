@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
 import { NotificationBell, NudgeCards } from "~/components/notification-nudges";
-import { data, isRouteErrorResponse } from "react-router";
+import { isRouteErrorResponse } from "react-router";
 
 function getUserEnrolledCourses(userId: number) {
   return db

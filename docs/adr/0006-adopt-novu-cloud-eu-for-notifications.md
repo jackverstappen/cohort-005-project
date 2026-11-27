@@ -17,6 +17,7 @@ Notification workflows become a hosted dependency: trigger definitions, subscrib
 The Free tier's 5-workflow cap exactly matches Cadence's five trigger categories — a tight fit with no headroom for a sixth. Adding any new category forces an upgrade to Cloud Pro ($30/month, 20 workflows, 30k runs), which also unlocks the proprietary features above. Features that depend on snooze, SSO, email tracking, RBAC, or custom branding should assume Pro, not Free.
 
 Related research:
+
 - `.agentheim/knowledge/research/novu-evaluation-2026-11-18.md`
 - `.agentheim/knowledge/research/courier-evaluation-2026-11-18.md`
 - `.agentheim/knowledge/research/knock-evaluation-2026-11-18.md`

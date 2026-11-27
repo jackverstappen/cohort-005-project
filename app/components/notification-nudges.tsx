@@ -169,6 +169,36 @@ export function NudgeCardsView({
 /**
  * Pure render: bell + tray for the three non-nudge categories.
  */
+function BellTray({ tray }: { tray: UINotification[] }) {
+  return (
+    <div className="absolute right-0 top-12 w-[380px] rounded-lg border bg-background shadow-xl">
+      <div className="flex items-center justify-between border-b p-3">
+        <p className="text-sm font-semibold">Notifications</p>
+        <span className="text-xs text-muted-foreground">
+          Nudges are in your dashboard
+        </span>
+      </div>
+      <div className="max-h-[480px] overflow-y-auto">
+        {tray.length === 0 ? (
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            You&apos;re all caught up.
+          </p>
+        ) : (
+          tray.map((n) => <TrayRow key={n.id} n={n} />)
+        )}
+      </div>
+      <div className="border-t p-2 text-center">
+        <a
+          href="/settings/notifications"
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          Manage preferences
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function NotificationBellView({
   notifications,
 }: {
@@ -191,33 +221,7 @@ export function NotificationBellView({
           </span>
         )}
       </button>
-      {open && (
-        <div className="absolute right-0 top-12 w-[380px] rounded-lg border bg-background shadow-xl">
-          <div className="flex items-center justify-between border-b p-3">
-            <p className="text-sm font-semibold">Notifications</p>
-            <span className="text-xs text-muted-foreground">
-              Nudges are in your dashboard
-            </span>
-          </div>
-          <div className="max-h-[480px] overflow-y-auto">
-            {tray.length === 0 ? (
-              <p className="p-6 text-center text-sm text-muted-foreground">
-                You&apos;re all caught up.
-              </p>
-            ) : (
-              tray.map((n) => <TrayRow key={n.id} n={n} />)
-            )}
-          </div>
-          <div className="border-t p-2 text-center">
-            <a
-              href="/settings/notifications"
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Manage preferences
-            </a>
-          </div>
-        </div>
-      )}
+      {open && <BellTray tray={tray} />}
     </div>
   );
 }

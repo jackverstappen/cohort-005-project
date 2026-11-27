@@ -107,7 +107,7 @@ describe("NudgeCardsView", () => {
     render(<NudgeCardsView notifications={fixtures} onDismiss={onDismiss} />);
 
     const dismissButtons = screen.getAllByLabelText("Dismiss");
-    fireEvent.click(dismissButtons[0]!);
+    fireEvent.click(dismissButtons[0]);
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(onDismiss).toHaveBeenCalledWith("n1");

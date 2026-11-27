@@ -1,13 +1,12 @@
-import { useEffect, useState } from "react";
-import { Link, useFetcher } from "react-router";
-import { toast } from "sonner";
+import { useState } from "react";
+import { Link } from "react-router";
 import type { Route } from "./+types/team";
 import { people } from "~/modules/permissions/person.server";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
-import { Textarea } from "~/components/ui/textarea";
 import { BookOpen, Copy, Check, AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse } from "react-router";
+import { TeamLicenceRow } from "~/components/team-licence-row";
 import { db } from "~/db";
 import {
   teams,
@@ -16,7 +15,6 @@ import {
   courses,
   users,
   TeamMemberRole,
-  RefundStatus,
 } from "~/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
@@ -25,7 +23,6 @@ import {
   type SeatAvailability,
 } from "~/lib/refunds.server";
 import { grantSeatToStudent } from "~/lib/seat-grants.server";
-import { formatPrice } from "~/lib/utils";
 import { z } from "zod";
 import { parseFormData } from "~/lib/validation";
 
@@ -179,12 +176,11 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ errors: parsed.errors }, { status: 400 });
   }
 
-  const result = await grantSeatToStudent(
-    db,
-    parsed.data.teamLicenceId,
-    parsed.data.studentEmail,
-    currentUserId
-  );
+  const result = await grantSeatToStudent(db, {
+    teamLicenceId: parsed.data.teamLicenceId,
+    studentEmail: parsed.data.studentEmail,
+    teamAdminId: currentUserId,
+  });
   if (!result.ok) {
     return data({ errors: { form: result.error } }, { status: result.status });
   }
@@ -377,150 +373,6 @@ export default function Team({ loaderData }: Route.ComponentProps) {
         )}
       </div>
     </div>
-  );
-}
-
-type TeamLicence = Route.ComponentProps["loaderData"]["teamLicences"][number];
-
-function TeamLicenceRow({ licence }: { licence: TeamLicence }) {
-  const fetcher = useFetcher<{ errors?: Record<string, string> }>();
-  const grantFetcher = useFetcher<{
-    errors?: Record<string, string>;
-    ok?: boolean;
-  }>();
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [grantEmail, setGrantEmail] = useState("");
-  const isSubmitting = fetcher.state !== "idle";
-  const isGranting = grantFetcher.state !== "idle";
-  const refundRequest = licence.latestRefundRequest;
-
-  useEffect(() => {
-    const firstError = Object.values(grantFetcher.data?.errors ?? {})[0];
-    if (grantFetcher.state === "idle" && firstError) {
-      toast.error(firstError);
-    } else if (grantFetcher.state === "idle" && grantFetcher.data?.ok) {
-      toast.success("Seat granted — the student has been invited.");
-      setGrantEmail("");
-    }
-  }, [grantFetcher.state, grantFetcher.data]);
-
-  useEffect(() => {
-    const firstError = Object.values(fetcher.data?.errors ?? {})[0];
-    if (fetcher.state === "idle" && firstError) {
-      toast.error(firstError);
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="font-medium">{licence.courseTitle}</p>
-            <p className="text-sm text-muted-foreground">
-              {licence.seatCount} seats · {licence.claimedSeatCount} claimed ·{" "}
-              {formatPrice(licence.amountPaid)} · bought{" "}
-              {new Date(licence.purchasedAt).toLocaleDateString()}
-            </p>
-          </div>
-          {refundRequest?.status === RefundStatus.Open && (
-            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-              Refund requested — seats on hold
-            </span>
-          )}
-          {refundRequest?.status === RefundStatus.Approved && (
-            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-              Refunded
-            </span>
-          )}
-          {licence.canRequestRefund && !isFormOpen && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => setIsFormOpen(true)}
-            >
-              Request a refund
-            </Button>
-          )}
-        </div>
-
-        {refundRequest?.status !== RefundStatus.Open &&
-          refundRequest?.status !== RefundStatus.Approved && (
-            <grantFetcher.Form
-              method="post"
-              action="/team"
-              className="mt-3 flex gap-2"
-            >
-              <input type="hidden" name="intent" value="grant-seat" />
-              <input
-                type="hidden"
-                name="teamLicenceId"
-                value={licence.purchaseId}
-              />
-              <input
-                type="email"
-                name="studentEmail"
-                required
-                placeholder="student@example.com"
-                value={grantEmail}
-                onChange={(e) => setGrantEmail(e.target.value)}
-                className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
-              />
-              <Button type="submit" size="sm" disabled={isGranting}>
-                {isGranting ? "Granting..." : "Grant seat"}
-              </Button>
-            </grantFetcher.Form>
-          )}
-
-        {refundRequest?.status === RefundStatus.Declined &&
-          refundRequest.decisionNote && (
-            <p className="mt-3 rounded-md bg-muted p-2 text-sm">
-              <span className="font-medium">Refund declined: </span>
-              {refundRequest.decisionNote}
-            </p>
-          )}
-
-        {licence.canRequestRefund && isFormOpen && (
-          <fetcher.Form
-            method="post"
-            action={`/courses/${licence.courseSlug}/refund`}
-            className="mt-4 space-y-2"
-          >
-            <p className="text-xs text-muted-foreground">
-              We will send {formatPrice(licence.amountPaid)} back once someone
-              has read your note. Until then, none of this licence&apos;s seats
-              can be claimed. You can ask until{" "}
-              {/* A calendar day, so read it as local midnight, not UTC. */}
-              {new Date(
-                `${licence.lastDayInWindow}T00:00`
-              ).toLocaleDateString()}
-              .
-            </p>
-            <input type="hidden" name="purchaseId" value={licence.purchaseId} />
-            <Textarea
-              name="reason"
-              rows={3}
-              required
-              placeholder="What went wrong?"
-            />
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={isSubmitting}>
-                {isSubmitting ? "Sending..." : "Request a refund"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsFormOpen(false)}
-              >
-                Keep it
-              </Button>
-            </div>
-          </fetcher.Form>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 

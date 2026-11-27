@@ -44,22 +44,26 @@ describe("redeemCoupon", () => {
     const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
     const admin = db
       .insert(schema.users)
-      .values({ name: "Admin Ada", email: "ada@example.com", role: UserRole.Student })
+      .values({
+        name: "Admin Ada",
+        email: "ada@example.com",
+        role: UserRole.Student,
+      })
       .returning()
       .get();
     const student = db
       .insert(schema.users)
-      .values({ name: "Student Sam", email: "sam@example.com", role: UserRole.Student })
+      .values({
+        name: "Student Sam",
+        email: "sam@example.com",
+        role: UserRole.Student,
+      })
       .returning()
       .get();
     seedTeamLicenceWithSeat(admin.id, "CODE-1");
 
-    const result = await redeemCoupon(
-      db,
-      "CODE-1",
-      student.id,
-      "",
-      (n) => notify(n, outboxTransport(directory))
+    const result = await redeemCoupon(db, "CODE-1", student.id, "", (n) =>
+      notify(n, outboxTransport(directory))
     );
 
     expect(result.ok).toBe(true);
@@ -67,7 +71,9 @@ describe("redeemCoupon", () => {
     const files = readdirSync(directory);
     const teamFiles = files.filter((f) => f.includes("team-progress"));
     expect(teamFiles).toHaveLength(1);
-    const written = JSON.parse(readFileSync(join(directory, teamFiles[0]), "utf8"));
+    const written = JSON.parse(
+      readFileSync(join(directory, teamFiles[0]), "utf8")
+    );
     expect(written).toMatchObject({
       subscriberId: String(admin.id),
       category: "team-progress",
@@ -90,7 +96,11 @@ describe("redeemCoupon", () => {
     const team = db.insert(schema.teams).values({}).returning().get();
     const purchase = db
       .insert(schema.purchases)
-      .values({ userId: student.id, courseId: base.course.id, amountPaid: 7900 })
+      .values({
+        userId: student.id,
+        courseId: base.course.id,
+        amountPaid: 7900,
+      })
       .returning()
       .get();
     db.insert(schema.coupons)
@@ -102,12 +112,8 @@ describe("redeemCoupon", () => {
       })
       .run();
 
-    const result = await redeemCoupon(
-      db,
-      "ORPHAN",
-      student.id,
-      "",
-      (n) => notify(n, outboxTransport(directory))
+    const result = await redeemCoupon(db, "ORPHAN", student.id, "", (n) =>
+      notify(n, outboxTransport(directory))
     );
 
     expect(result.ok).toBe(true);

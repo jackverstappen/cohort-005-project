@@ -59,7 +59,11 @@ describe("grantSeatToStudent", () => {
     const directory = mkdtempSync(join(tmpdir(), "notifications-outbox-"));
     const admin = db
       .insert(schema.users)
-      .values({ name: "Admin Ada", email: "ada@example.com", role: UserRole.Student })
+      .values({
+        name: "Admin Ada",
+        email: "ada@example.com",
+        role: UserRole.Student,
+      })
       .returning()
       .get();
     const student = addStudent("Student Sam", "sam@example.com");
@@ -67,9 +71,11 @@ describe("grantSeatToStudent", () => {
 
     const result = await grantSeatToStudent(
       db,
-      purchase.id,
-      "sam@example.com",
-      admin.id,
+      {
+        teamLicenceId: purchase.id,
+        studentEmail: "sam@example.com",
+        teamAdminId: admin.id,
+      },
       (notification) => notify(notification, outboxTransport(directory))
     );
 
@@ -101,7 +107,11 @@ describe("grantSeatToStudent", () => {
   it("refuses when caller is not the Team Admin", async () => {
     const admin = db
       .insert(schema.users)
-      .values({ name: "Admin", email: "admin@example.com", role: UserRole.Student })
+      .values({
+        name: "Admin",
+        email: "admin@example.com",
+        role: UserRole.Student,
+      })
       .returning()
       .get();
     const stranger = db
@@ -112,12 +122,11 @@ describe("grantSeatToStudent", () => {
     addStudent("Sam", "sam@example.com");
     const { purchase } = makeTeamLicence(admin.id, 1);
 
-    const result = await grantSeatToStudent(
-      db,
-      purchase.id,
-      "sam@example.com",
-      stranger.id
-    );
+    const result = await grantSeatToStudent(db, {
+      teamLicenceId: purchase.id,
+      studentEmail: "sam@example.com",
+      teamAdminId: stranger.id,
+    });
 
     expect(result).toMatchObject({ ok: false, status: 403 });
   });
@@ -125,18 +134,30 @@ describe("grantSeatToStudent", () => {
   it("refuses when no Seats are left", async () => {
     const admin = db
       .insert(schema.users)
-      .values({ name: "Admin", email: "admin@example.com", role: UserRole.Student })
+      .values({
+        name: "Admin",
+        email: "admin@example.com",
+        role: UserRole.Student,
+      })
       .returning()
       .get();
     addStudent("Sam", "sam@example.com");
     const { purchase } = makeTeamLicence(admin.id, 1);
 
-    const first = await grantSeatToStudent(db, purchase.id, "sam@example.com", admin.id);
+    const first = await grantSeatToStudent(db, {
+      teamLicenceId: purchase.id,
+      studentEmail: "sam@example.com",
+      teamAdminId: admin.id,
+    });
     expect(first.ok).toBe(true);
 
     const second = addStudent("Jo", "jo@example.com");
     void second;
-    const result = await grantSeatToStudent(db, purchase.id, "jo@example.com", admin.id);
+    const result = await grantSeatToStudent(db, {
+      teamLicenceId: purchase.id,
+      studentEmail: "jo@example.com",
+      teamAdminId: admin.id,
+    });
     expect(result).toMatchObject({ ok: false, status: 409 });
   });
 });

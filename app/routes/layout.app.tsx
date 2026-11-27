@@ -237,15 +237,22 @@ export async function loader({ request }: Route.LoaderArgs) {
  */
 function NovuLiveToasts() {
   const novu = useNovu();
-  const mountedAt = useRef(Date.now());
+  const mountedAt = useRef<number | null>(null);
 
   useEffect(() => {
+    mountedAt.current = Date.now();
     const off = novu.on("notifications.notification_received", (event) => {
       const n = event?.result;
       if (!n || n.isRead) return;
       // Guard against replays of history delivered just after mount.
       const createdMs = new Date(n.createdAt).getTime();
-      if (!Number.isNaN(createdMs) && createdMs < mountedAt.current) return;
+      if (
+        mountedAt.current !== null &&
+        !Number.isNaN(createdMs) &&
+        createdMs < mountedAt.current
+      ) {
+        return;
+      }
       toast(n.subject ?? n.body);
     });
     return () => {

@@ -21,9 +21,9 @@ export type Notification = {
   payload: Record<string, unknown>;
 };
 
-export interface NotificationTransport {
-  send(notification: Notification): Promise<void>;
-}
+export type NotificationTransport = {
+  send: (notification: Notification) => Promise<void>;
+};
 
 const NOVU_API_BASE = "https://eu.api.novu.co";
 

@@ -27,11 +27,11 @@ export const NEAR_COMPLETION_RATIO = 0.8;
 type DB = typeof defaultDb;
 type NotifyFn = (notification: Notification) => Promise<void>;
 
-interface SentKey {
+type SentKey = {
   subscriberId: string;
   category: NotificationCategory;
   idempotencyKey: string;
-}
+};
 
 /** Has a notification with this (subscriberId, category, key) already been sent? */
 function hasBeenSent(db: DB, key: SentKey): boolean {
@@ -66,10 +66,12 @@ export async function runNotificationsJob(
   now: Date,
   notify: NotifyFn = defaultNotify
 ): Promise<void> {
-  const cutoff = new Date(
-    now.getTime() - INACTIVITY_THRESHOLD_DAYS * 86_400_000
-  ).toISOString();
+  await emitReengagementNudges(db, now, notify);
+  await emitCompletionNudges(db, now, notify);
+  await emitTeamProgressCourseCompleted(db, now, notify);
+}
 
+function selectReengagementRows(db: DB) {
   // Enrollments with their latest watch-event timestamp (if any), joined to
   // the course for payload. completedAt enrollments are skipped.
   const lastActivity = db
@@ -82,8 +84,7 @@ export async function runNotificationsJob(
     .groupBy(schema.videoWatchEvents.userId, schema.videoWatchEvents.lessonId)
     .as("last_activity");
 
-  // Per-enrollment latest activity across all lessons of that course.
-  const rows = db
+  return db
     .select({
       enrollmentId: schema.enrollments.id,
       userId: schema.enrollments.userId,
@@ -115,25 +116,31 @@ export async function runNotificationsJob(
     .where(sql`${schema.enrollments.completedAt} is null`)
     .groupBy(schema.enrollments.id)
     .all();
+}
 
-  for (const row of rows) {
+async function emitReengagementNudges(
+  db: DB,
+  now: Date,
+  notify: NotifyFn
+): Promise<void> {
+  const cutoff = new Date(
+    now.getTime() - INACTIVITY_THRESHOLD_DAYS * 86_400_000
+  ).toISOString();
+
+  for (const row of selectReengagementRows(db)) {
     // Use last watch event if present, else fall back to enrolledAt — a
     // learner who enrolled and never watched is also a candidate.
     const lastActive = row.lastWatchedAt ?? row.enrolledAt;
     if (lastActive >= cutoff) continue;
 
     const subscriberId = String(row.userId);
-    // Crossing-based idempotency: the key is the enrollment plus the
-    // learner's last-activity day. A second nudge only fires if they come
-    // back (new activity → new lastActivityIso), lapse again, and so push
-    // a fresh bucket. See spec #12: one notification per Enrollment per
-    // inactivity-threshold crossing, not per night (or per week).
-    const idempotencyKey = `crossing:${row.enrollmentId}:${lastActive.slice(0, 10)}`;
-
+    // Crossing-based idempotency: enrollment + learner's last-activity day.
+    // A second nudge only fires if they come back (new activity → new
+    // lastActivityIso), lapse again, and push a fresh bucket. Spec #12.
     const key: SentKey = {
       subscriberId,
       category: "re-engagement",
-      idempotencyKey,
+      idempotencyKey: `crossing:${row.enrollmentId}:${lastActive.slice(0, 10)}`,
     };
     if (hasBeenSent(db, key)) continue;
 
@@ -148,9 +155,62 @@ export async function runNotificationsJob(
 
     recordSent(db, key, now);
   }
+}
 
-  await emitCompletionNudges(db, now, notify);
-  await emitTeamProgressCourseCompleted(db, now, notify);
+type CompletionEnrollmentRow = {
+  enrollmentId: number;
+  userId: number;
+  courseId: number;
+  courseTitle: string;
+  courseSlug: string;
+};
+
+/**
+ * Returns [watchedSeconds, totalSeconds] for the enrollment, or null when the
+ * course has no measurable duration (no lessons, or no durationMinutes set).
+ */
+function getWatchProgress(
+  db: DB,
+  row: CompletionEnrollmentRow
+): { watchedSeconds: number; totalSeconds: number } | null {
+  const lessonIds = db
+    .select({ id: schema.lessons.id })
+    .from(schema.lessons)
+    .innerJoin(schema.modules, eq(schema.lessons.moduleId, schema.modules.id))
+    .where(eq(schema.modules.courseId, row.courseId))
+    .all()
+    .map((r) => r.id);
+  if (lessonIds.length === 0) return null;
+
+  const durationRow = db
+    .select({
+      total: sql<number>`coalesce(sum(${schema.lessons.durationMinutes}), 0)`,
+    })
+    .from(schema.lessons)
+    .where(inArray(schema.lessons.id, lessonIds))
+    .get();
+  const totalSeconds = (durationRow?.total ?? 0) * 60;
+  if (totalSeconds <= 0) return null;
+
+  const furthestPerLesson = db
+    .select({
+      furthest: sql<number>`max(${schema.videoWatchEvents.positionSeconds})`,
+    })
+    .from(schema.videoWatchEvents)
+    .where(
+      and(
+        eq(schema.videoWatchEvents.userId, row.userId),
+        inArray(schema.videoWatchEvents.lessonId, lessonIds)
+      )
+    )
+    .groupBy(schema.videoWatchEvents.lessonId)
+    .all();
+  const watchedSeconds = furthestPerLesson.reduce(
+    (total, r) => total + (r.furthest ?? 0),
+    0
+  );
+
+  return { watchedSeconds, totalSeconds };
 }
 
 async function emitCompletionNudges(
@@ -175,50 +235,9 @@ async function emitCompletionNudges(
     .all();
 
   for (const row of enrollments) {
-    // Total watchable seconds for the course — sum(durationMinutes) across
-    // all lessons in all modules of the course. Treated as seconds via *60.
-    // A course with no durations defined can't be measured, so skip it.
-    const lessonIds = db
-      .select({ id: schema.lessons.id })
-      .from(schema.lessons)
-      .innerJoin(
-        schema.modules,
-        eq(schema.lessons.moduleId, schema.modules.id)
-      )
-      .where(eq(schema.modules.courseId, row.courseId))
-      .all()
-      .map((r) => r.id);
-
-    if (lessonIds.length === 0) continue;
-
-    const durationRow = db
-      .select({
-        total: sql<number>`coalesce(sum(${schema.lessons.durationMinutes}), 0)`,
-      })
-      .from(schema.lessons)
-      .where(inArray(schema.lessons.id, lessonIds))
-      .get();
-    const totalSeconds = (durationRow?.total ?? 0) * 60;
-    if (totalSeconds <= 0) continue;
-
-    const furthestPerLesson = db
-      .select({
-        furthest: sql<number>`max(${schema.videoWatchEvents.positionSeconds})`,
-      })
-      .from(schema.videoWatchEvents)
-      .where(
-        and(
-          eq(schema.videoWatchEvents.userId, row.userId),
-          inArray(schema.videoWatchEvents.lessonId, lessonIds)
-        )
-      )
-      .groupBy(schema.videoWatchEvents.lessonId)
-      .all();
-    const watchedSeconds = furthestPerLesson.reduce(
-      (total, r) => total + (r.furthest ?? 0),
-      0
-    );
-
+    const progress = getWatchProgress(db, row);
+    if (!progress) continue;
+    const { watchedSeconds, totalSeconds } = progress;
     if (watchedSeconds / totalSeconds < NEAR_COMPLETION_RATIO) continue;
 
     const subscriberId = String(row.userId);
@@ -250,6 +269,35 @@ async function emitCompletionNudges(
 // to completed — i.e. `enrollments.completedAt` is set — independently of
 // the learner's own completion nudge (which reacts to video-seconds). We
 // scan completed enrollments and dedup per-enrollment.
+type CompletedEnrollmentRow = {
+  enrollmentId: number;
+  userId: number;
+  courseId: number;
+  courseTitle: string;
+};
+
+/** Returns the Team Admin to notify for this completed enrollment, or null. */
+function findTeamAdminForCompletion(
+  db: DB,
+  row: CompletedEnrollmentRow
+): number | null {
+  const seat = db
+    .select({ teamId: schema.coupons.teamId })
+    .from(schema.coupons)
+    .where(
+      and(
+        eq(schema.coupons.redeemedByUserId, row.userId),
+        eq(schema.coupons.courseId, row.courseId)
+      )
+    )
+    .get();
+  if (!seat) return null;
+
+  const adminId = getTeamAdminId(db, seat.teamId);
+  if (adminId === null || adminId === row.userId) return null;
+  return adminId;
+}
+
 async function emitTeamProgressCourseCompleted(
   db: DB,
   now: Date,
@@ -271,20 +319,8 @@ async function emitTeamProgressCourseCompleted(
     .all();
 
   for (const row of completed) {
-    const seat = db
-      .select({ teamId: schema.coupons.teamId })
-      .from(schema.coupons)
-      .where(
-        and(
-          eq(schema.coupons.redeemedByUserId, row.userId),
-          eq(schema.coupons.courseId, row.courseId)
-        )
-      )
-      .get();
-    if (!seat) continue;
-
-    const adminId = getTeamAdminId(db, seat.teamId);
-    if (adminId === null || adminId === row.userId) continue;
+    const adminId = findTeamAdminForCompletion(db, row);
+    if (adminId === null) continue;
 
     const subscriberId = String(adminId);
     const key: SentKey = {
@@ -322,6 +358,7 @@ async function emitTeamProgressCourseCompleted(
 if (import.meta.url === `file://${process.argv[1]}`) {
   runNotificationsJob(defaultDb, new Date())
     .then(() => {
+      // eslint-disable-next-line no-console -- CLI entry point success log
       console.log("notifications job: done");
     })
     .catch((error) => {
